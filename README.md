@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-A web-based tool for analyzing flight logs from ArduPilot-powered drones, providing both basic statistics and advanced AI-powered insights.
+A web-based tool for analyzing flight logs from ArduPilot-powered drones, providing both basic statistics and advanced AI-powered insights **(in dev)** .
 
 ## Features
 

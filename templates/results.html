@@ -15,9 +15,78 @@
             opacity: 0;
             pointer-events: none;
         }
+        /* Світла тема - за замовчуванням */
+        body {
+            background-color: #f5f5f5;
+            color: #333;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .section {
+            background: #fff;
+            padding: 20px;
+            border-radius: 5px;
+            margin: 20px 0;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.);
+        }
+        /* Темна тема */
+        body.dark-theme {
+            background-color: #121212;
+            color: #ddd;
+        }
+        body.dark-theme .container {
+            /* можна зробити світліший фон блоків */
+            background: none;
+        }
+        body.dark-theme .section {
+            background: #4d4d4d;
+            box-shadow: 0 2px 5px rgba(255,255,255,0.1);
+        }
+        body.dark-theme .stat-card {
+            background: #414141;
+            border-left-color: #82aaff;
+        }
+        body.dark-theme .stat-card h3 {
+            color: #a0a0a0;
+        }
+        body.dark-theme a.back-link {
+            color: #82aaff;
+        }
+        body.dark-theme button.toggle-button {
+            background: #82aaff;
+            color: #4b4b4b;
+        }
+        body.dark-theme button.toggle-button:hover {
+            background: #6a8fcc;
+        }
+
+        /* Кнопка перемикання теми */
+        #theme-toggle {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            padding: 10px 15px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            z-index: 1000;
+            transition: background 0.3s;
+        }
+        #theme-toggle:hover {
+            background: #2980b9;
+        }
     </style>
 </head>
 <body>
+    <button id="theme-toggle" aria-label="Переключити тему">Темна тема</button>
     <div class="container">
         <h1>Результати аналізу</h1>
         <a href="{{ url_for('upload_file') }}" class="back-link">← На головну</a>
@@ -69,28 +138,56 @@
     </div>
 
     <script>
+        // Перемикач теми
+        const themeToggleBtn = document.getElementById('theme-toggle');
+
+        // Встановлення теми при завантаженні сторінки (з localStorage)
+        function loadTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                document.body.classList.add('dark-theme');
+                themeToggleBtn.textContent = 'Світла тема';
+            } else {
+                document.body.classList.remove('dark-theme');
+                themeToggleBtn.textContent = 'Темна тема';
+            }
+        }
+
+        // Перемикання теми при кліку
+        themeToggleBtn.addEventListener('click', () => {
+            document.body.classList.toggle('dark-theme');
+            if (document.body.classList.contains('dark-theme')) {
+                themeToggleBtn.textContent = 'Світла тема';
+                localStorage.setItem('theme', 'dark');
+            } else {
+                themeToggleBtn.textContent = 'Темна тема';
+                localStorage.setItem('theme', 'light');
+            }
+        });
+
+        loadTheme();
         // Пошук усіх кнопок toggle-button
         const toggleButtons = document.querySelectorAll('.toggle-button');
 
-toggleButtons.forEach(button => {
-    button.addEventListener('click', () => {
-        const targetId = button.getAttribute('data-target');
-        const content = document.getElementById(targetId);
-        if (!content) return;
-
-        const isCollapsed = content.classList.contains('collapsed');
-
-        if (isCollapsed) {
-            // Розгорнути
-            content.classList.remove('collapsed');
-            button.textContent = button.textContent.replace('▲', '▼');
-        } else {
-            // Згорнути
-            content.classList.add('collapsed');
-            button.textContent = button.textContent.replace('▼', '▲');
-        }
-    });
-});
+        toggleButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                const targetId = button.getAttribute('data-target');
+                const content = document.getElementById(targetId);
+                if (!content) return;
+            
+                const isCollapsed = content.classList.contains('collapsed');
+            
+                if (isCollapsed) {
+                    // Розгорнути
+                    content.classList.remove('collapsed');
+                    button.textContent = button.textContent.replace('▲', '▼');
+                } else {
+                    // Згорнути
+                    content.classList.add('collapsed');
+                    button.textContent = button.textContent.replace('▼', '▲');
+                }
+            });
+        });
 
     </script>
 </body>

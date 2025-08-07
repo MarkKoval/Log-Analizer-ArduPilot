@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Результати аналізу</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <!-- Додаємо підтримку Plotly (вже включається автоматично, але можна додати для надійності) -->
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 </head>
 <body>
     <div class="container">
@@ -27,24 +29,30 @@
             <h2>Графіки польоту</h2>
             <div class="graphs">
                 {% if graphs.altitude %}
-                <div class="graph">
-                    <img src="data:image/png;base64,{{ graphs.altitude }}" alt="Висота польоту">
+                <div class="graph-container">
+                    <div class="plotly-graph">
+                        {{ graphs.altitude|safe }}
+                    </div>
                 </div>
                 {% endif %}
                 
                 {% if graphs.speed %}
-                <div class="graph">
-                    <img src="data:image/png;base64,{{ graphs.speed }}" alt="Швидкість польоту">
+                <div class="graph-container">
+                    <div class="plotly-graph">
+                        {{ graphs.speed|safe }}
+                    </div>
+                </div>
+                {% endif %}
+
+                {% if graphs.throttle %}
+                <div class="graph-container">
+                    <div class="plotly-graph">
+                        {{ graphs.throttle|safe }}
+                    </div>
                 </div>
                 {% endif %}
             </div>
         </div>
-        
-        <div class="section">
-    <h2>Розширений аналіз (ШІ)</h2>
-
-     
-</div>
     </div>
 </body>
 </html>

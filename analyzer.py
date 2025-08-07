@@ -1,7 +1,4 @@
 import pandas as pd
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 from pymavlink import mavutil
 from sklearn.ensemble import IsolationForest
 from sklearn.cluster import KMeans
@@ -12,6 +9,8 @@ import logging
 from datetime import datetime, timedelta
 from geopy.distance import geodesic
 import traceback
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -116,7 +115,7 @@ class LogAnalyzer:
         # Extract throttle from CTUN - with existence check
         if 'CTUN' in self.data['msg_type'].unique():
             ctun_mask = self.data['msg_type'] == 'CTUN'
-            # Використовуємо ThO як throttle
+            # Using ThO as throttle
             if 'ThO' in self.data.columns:
                 self.data.loc[ctun_mask, 'throttle'] = pd.to_numeric(self.data.loc[ctun_mask, 'ThO'], errors='coerce')
                 logger.info("Throttle extracted from CTUN.ThO column")
@@ -131,13 +130,12 @@ class LogAnalyzer:
         else:
             print("Throttle column MISSING.")
 
-
         # Interpolate numeric data
         numeric_data = self.data.select_dtypes(include=[np.number])
         if not numeric_data.empty:
             self.data[numeric_data.columns] = numeric_data.interpolate(method='time')
 
-        # --- Обрізка логу до першого моменту, коли throttle >= 10% ---
+        # --- Trim log to first moment when throttle >= 10% ---
         if 'throttle' in self.data.columns:
             throttle_data = self.data['throttle'].dropna()
             
@@ -146,11 +144,11 @@ class LogAnalyzer:
         
             if start_mask.any() and end_mask.any():
                 first_idx = start_mask.idxmax()
-                last_idx = end_mask[end_mask.index > first_idx].index[-1]  # гарантовано після first_idx
+                last_idx = end_mask[end_mask.index > first_idx].index[-1]  # guaranteed after first_idx
         
                 print(f"Trimming from {first_idx} to {last_idx}")
         
-                # Переконаємося, що last_idx дійсно після first_idx
+                # Make sure last_idx is really after first_idx
                 if last_idx > first_idx:
                     self.data = self.data.loc[first_idx:last_idx]
                 else:
@@ -159,9 +157,6 @@ class LogAnalyzer:
                 print("Throttle thresholds not found for trimming.")
         else:
             print("Throttle column missing.")
-
-
-
 
     def get_basic_statistics(self):
         """Calculate basic flight statistics"""
@@ -179,7 +174,6 @@ class LogAnalyzer:
         if distance_est:
             stats['estimated_distance_m'] = f"{distance_est:.1f} м"
             stats['estimated_distance_km'] = f"{distance_est / 1000:.2f} км"
-
 
         # Altitude statistics
         if 'altitude' in self.data.columns:
@@ -222,106 +216,189 @@ class LogAnalyzer:
                 for i in range(1, len(points)):
                     try:
                         distance_km += geodesic(points[i-1], points[i]).km
-                    except Exception as e:
+                    except Exception:
                         continue
 
                 stats['total_distance_km'] = f"{distance_km:.2f} км"
                 stats['total_distance_m'] = f"{distance_km * 1000:.1f} м"
 
-        # Якщо GPS не дав результат — оцінити через швидкість
+        # If GPS didn't give results - estimate via speed
         if not distance_km or distance_km == 0.0:
             distance_est = self.estimate_distance_from_speed()
             if distance_est:
                 stats['total_distance_m'] = f"{distance_est:.1f} м"
                 stats['total_distance_km'] = f"{distance_est / 1000:.2f} км"
 
-
-
         return stats
 
     def generate_basic_graphs(self):
-        """Generate flight data visualizations"""
+        """Generate interactive flight data visualizations using Plotly"""
         graphs = {}
-        FIGURE_SIZE = (16, 9)  # Full HD size
         
         if self.data.empty:
             return graphs
+        
+        # Загальні налаштування для всіх графіків
+        common_layout = {
+            'font': {
+                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                'size': 14,
+                'color': '#333',
+                'weight': 'bold'  # жирний шрифт
+            },
+            'hovermode': 'x unified',
+            'template': 'plotly_white',
+            'height': 500,
+            'margin': dict(l=50, r=50, b=50, t=80, pad=4),
+            'plot_bgcolor': 'white',
+            'paper_bgcolor': 'white',
+        }
         
         # Altitude plot
         if 'altitude' in self.data.columns:
             alt_data = self.data['altitude'].dropna()
             if not alt_data.empty:
-                fig, ax = plt.subplots(figsize=FIGURE_SIZE)
-                ax.plot(alt_data.index, alt_data, 
-                       label='Висота (BARO)', 
-                       color='blue',
-                       linewidth=2)
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=alt_data.index,
+                    y=alt_data,
+                    mode='lines',
+                    name='Висота (BARO)',
+                    line=dict(color='blue', width=2),
+                    hovertemplate='<b>Час</b>: %{x}<br><b>Висота</b>: %{y:.2f} м<extra></extra>'
+                ))
                 
-                ax.set_title('Висота польоту', fontsize=16)
-                ax.set_ylabel('Висота (m)', fontsize=14)
-                ax.set_xlabel('Час', fontsize=14)
-                ax.grid(True, linestyle='--', alpha=0.7)
-                ax.legend(fontsize=12)
+                layout = common_layout.copy()
+                layout.update({
+                    'title': {
+                        'text': 'Висота польоту',
+                        'font': {
+                            'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                            'size': 18,
+                            'weight': 'bold'  # жирний заголовок
+                        }
+                    },
+                    'yaxis': {
+                        'title': {
+                            'text': 'Висота (m)',
+                            'font': {
+                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                                'size': 16,
+                                'weight': 'bold'  # жирний текст осі Y
+                            }
+                        }
+                    },
+                    'xaxis': {
+                        'title': {
+                            'text': 'Час',
+                            'font': {
+                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                                'size': 16,
+                                'weight': 'bold'  # жирний текст осі X
+                            }
+                        }
+                    },
+                })
+                fig.update_layout(layout)
                 
-                plt.xticks(fontsize=12)
-                plt.yticks(fontsize=12)
-                fig.autofmt_xdate()
-                
-                graphs['altitude'] = self._fig_to_base64(fig)
-                plt.close(fig)
+                graphs['altitude'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
         
         # Speed plot
         if 'speed' in self.data.columns:
             speed_data = self.data['speed'].dropna()
             if not speed_data.empty:
-                fig, ax = plt.subplots(figsize=FIGURE_SIZE)
-                ax.plot(speed_data.index, speed_data * 3.6,
-                       label='Швидкість (GPS)',
-                       color='green',
-                       linewidth=2)
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=speed_data.index,
+                    y=speed_data * 3.6,
+                    mode='lines',
+                    name='Швидкість (GPS)',
+                    line=dict(color='green', width=2),
+                    hovertemplate='<b>Час</b>: %{x}<br><b>Швидкість</b>: %{y:.2f} км/год<extra></extra>'
+                ))
                 
-                ax.set_title('Швидкість польоту', fontsize=16)
-                ax.set_ylabel('Швидкість (km/h)', fontsize=14)
-                ax.set_xlabel('Час', fontsize=14)
-                ax.grid(True, linestyle='--', alpha=0.7)
-                ax.legend(fontsize=12)
+                layout = common_layout.copy()
+                layout.update({
+                    'title': {
+                        'text': 'Висота польоту',
+                        'font': {
+                            'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                            'size': 18,
+                            'weight': 'bold'  # жирний заголовок
+                        }
+                    },
+                    'yaxis': {
+                        'title': {
+                            'text': 'Висота (m)',
+                            'font': {
+                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                                'size': 16,
+                                'weight': 'bold'  # жирний текст осі Y
+                            }
+                        }
+                    },
+                    'xaxis': {
+                        'title': {
+                            'text': 'Час',
+                            'font': {
+                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                                'size': 16,
+                                'weight': 'bold'  # жирний текст осі X
+                            }
+                        }
+                    },
+                })
+                fig.update_layout(layout)
                 
-                plt.xticks(fontsize=12)
-                plt.yticks(fontsize=12)
-                fig.autofmt_xdate()
-                
-                graphs['speed'] = self._fig_to_base64(fig)
-                plt.close(fig)
+                graphs['speed'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
         
         # Throttle plot
         if 'throttle' in self.data.columns:
             thr_data = self.data['throttle'].dropna()
             if not thr_data.empty:
-                fig, ax = plt.subplots(figsize=FIGURE_SIZE)
-                ax.plot(thr_data.index, thr_data,
-                       label='Throttle',
-                       color='orange',
-                       linewidth=2)
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=thr_data.index,
+                    y=thr_data,
+                    mode='lines',
+                    name='Throttle',
+                    line=dict(color='orange', width=2),
+                    hovertemplate='<b>Час</b>: %{x}<br><b>Throttle</b>: %{y:.1f}%<extra></extra>'
+                ))
                 
-                ax.set_title('Throttle Output', fontsize=16)
-                ax.set_ylabel('Throttle (%)', fontsize=14)
-                ax.set_xlabel('Time', fontsize=14)
-                ax.grid(True, linestyle='--', alpha=0.7)
-                ax.legend(fontsize=12)
+                layout = common_layout.copy()
+                layout.update({
+                    'title': {
+                        'text': 'Висота польоту',
+                        'font': {
+                            'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                            'size': 18,
+                            'weight': 'bold'  # жирний заголовок
+                        }
+                    },
+                    'yaxis': {
+                        'title': {
+                            'text': 'Висота (m)',
+                            'font': {
+                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                                'size': 16,
+                                'weight': 'bold'  # жирний текст осі Y
+                            }
+                        }
+                    },
+                    'xaxis': {
+                        'title': {
+                            'text': 'Час',
+                            'font': {
+                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+                                'size': 16,
+                                'weight': 'bold'  # жирний текст осі X
+                            }
+                        }
+                    },
+                })
+                fig.update_layout(layout)
                 
-                plt.xticks(fontsize=12)
-                plt.yticks(fontsize=12)
-                fig.autofmt_xdate()
-                
-                graphs['throttle'] = self._fig_to_base64(fig)
-                plt.close(fig)
+                graphs['throttle'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
         
         return graphs
-
-
-    def _fig_to_base64(self, fig):
-        """Convert matplotlib figure to base64"""
-        img = io.BytesIO()
-        fig.savefig(img, format='png', bbox_inches='tight', dpi=100)
-        img.seek(0)
-        return base64.b64encode(img.getvalue()).decode('utf-8')

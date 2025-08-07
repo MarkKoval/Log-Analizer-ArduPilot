@@ -1,20 +1,35 @@
+from flask import Flask, session, render_template, request, redirect, url_for, send_from_directory, flash
+from flask_session import Session
+import tempfile
 import os
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, flash
+import uuid
 from werkzeug.utils import secure_filename
 from analyzer import LogAnalyzer
-import tempfile
-import uuid
 
 app = Flask(__name__)
 
-# Налаштування
-app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # 100MB limit
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024
 app.config['UPLOAD_FOLDER'] = tempfile.gettempdir()
-app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['ALLOWED_EXTENSIONS'] = {'bin'}
+app.config['SECRET_KEY'] = 'your-secret-key-here'
+app.config['SESSION_TYPE'] = 'filesystem'
+app.config['SESSION_FILE_DIR'] = os.path.join(tempfile.gettempdir(), 'flask_sessions')
+app.config['SESSION_PERMANENT'] = False
+app.config['SESSION_USE_SIGNER'] = True
+
+Session(app)
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+@app.route('/session-type')
+def session_type():
+    return str(type(session))  # Ось тут
+
+@app.route('/test-session')
+def test_session():
+    session['big'] = 'x' * 5000
+    return 'Session записана'
 
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():

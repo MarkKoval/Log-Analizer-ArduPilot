@@ -66,7 +66,7 @@ button[type="submit"]:hover {
     background: #fff;
     padding: 20px;
     border-radius: 5px;
-    margin: 20px 0;
+    margin: 30px 0;
     box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
 
@@ -116,8 +116,26 @@ button[type="submit"]:hover {
 .back-link {
     display: inline-block;
     margin-bottom: 20px;
-    color: #3498db;
     text-decoration: none;
+    display: inline-block;
+    padding: 5px 10px;
+    background: #3498db; /* як у file-upload label */
+    color: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: bold;
+    border: none;
+    transition: background 0.3s;
+    user-select: none;
+}
+
+.back-link:hover {
+    background: #2980b9;
+}
+
+.back-link:focus {
+    outline: none;
 }
 
 .download-btn {
@@ -195,7 +213,8 @@ button[type="submit"]:hover {
             border: 1px solid #e0e0e0;
             border-radius: 8px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-            margin-bottom: 30px;
+            margin-bottom: 15px;
+            margin-top: 15px;
         }
 
         .js-plotly-plot .plotly, 
@@ -215,7 +234,6 @@ button[type="submit"]:hover {
     font-size: 18px;
     font-weight: bold;
     border: none;
-    margin-bottom: 15px;
     transition: background 0.3s;
     user-select: none;
 }

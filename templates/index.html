@@ -9,7 +9,7 @@
 <body>
     <div class="container">
         <h1>Аналіз логів БПЛА (Ardupilot)</h1>
-        <p>Завантажте .bin файл логу для аналізу (макс. 100MB)</p>
+        <p>Завантажте .bin файл логу для аналізу (макс. 1000MB)</p>
         
         {% with messages = get_flashed_messages() %}
             {% if messages %}
@@ -24,10 +24,10 @@
         <form method="POST" enctype="multipart/form-data" id="uploadForm">
             <div class="file-upload">
                 <input type="file" name="file" id="file" accept=".bin" required>
-                <label for="file">Обрати файл</label>
+                <label for="file" class="toggle-button">Обрати файл</label>
                 <div id="fileInfo"></div>
             </div>
-            <button type="submit">Аналізувати</button>
+            <button type="submit" class="">Аналізувати</button>
         </form>
         
         <div class="info">

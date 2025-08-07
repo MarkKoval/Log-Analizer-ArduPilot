@@ -203,3 +203,42 @@ button[type="submit"]:hover {
         .js-plotly-plot .plotly text {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
         }
+
+.toggle-button {
+    display: inline-block;
+    padding: 10px 15px;
+    background: #3498db; /* як у file-upload label */
+    color: #fff;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: bold;
+    border: none;
+    margin-bottom: 15px;
+    transition: background 0.3s;
+    user-select: none;
+}
+
+.toggle-button:hover {
+    background: #2980b9;
+}
+
+.toggle-button:focus {
+    outline: none;
+}
+
+.section-content {
+    max-height: 2000px; /* достатньо високе значення, щоб вміст повністю поміщався */
+    overflow: hidden;
+    transition: max-height 0.4s ease;
+    /* opacity для плавності появи */
+    opacity: 1;
+    transition-property: max-height, opacity;
+}
+
+.section-content.collapsed {
+    max-height: 0;
+    opacity: 0;
+    padding: 0; /* опціонально, щоб прибрати відступи при згортанні */
+    margin: 0;
+}

@@ -320,7 +320,7 @@ class LogAnalyzer:
                 layout = common_layout.copy()
                 layout.update({
                     'title': {
-                        'text': 'Висота польоту',
+                        'text': 'Швидкість польоту',
                         'font': {
                             'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
                             'size': 18,
@@ -329,7 +329,7 @@ class LogAnalyzer:
                     },
                     'yaxis': {
                         'title': {
-                            'text': 'Висота (m)',
+                            'text': 'Швидкість (км/год)',
                             'font': {
                                 'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
                                 'size': 16,
@@ -369,7 +369,7 @@ class LogAnalyzer:
                 layout = common_layout.copy()
                 layout.update({
                     'title': {
-                        'text': 'Висота польоту',
+                        'text': 'Відсоток газу (Throttle)',
                         'font': {
                             'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
                             'size': 18,
@@ -378,7 +378,7 @@ class LogAnalyzer:
                     },
                     'yaxis': {
                         'title': {
-                            'text': 'Висота (m)',
+                            'text': 'Відсоток газу (%)',
                             'font': {
                                 'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
                                 'size': 16,

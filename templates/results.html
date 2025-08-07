@@ -1,12 +1,21 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Результати аналізу</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-    <!-- Додаємо підтримку Plotly (вже включається автоматично, але можна додати для надійності) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
     <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        /* Приховуємо контент, якщо встановлено клас hidden */
+        .hidden {
+            max-height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            opacity: 0;
+            pointer-events: none;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
@@ -14,45 +23,75 @@
         <a href="{{ url_for('upload_file') }}" class="back-link">← На головну</a>
         
         <div class="section">
-            <h2>Основні параметри польоту</h2>
-            <div class="stats-grid">
-                {% for key, value in basic_stats.items() %}
-                <div class="stat-card">
-                    <h3>{{ key|replace('_', ' ')|title }}</h3>
-                    <p>{{ value }}</p>
+            <button class="toggle-button" data-target="basic-stats-content">Основні параметри польоту ▼</button>
+            <div id="basic-stats-content" class="section-content">
+                <div class="stats-grid">
+                    {% for key, value in basic_stats.items() %}
+                    <div class="stat-card">
+                        <h3>{{ key|replace('_', ' ')|title }}</h3>
+                        <p>{{ value }}</p>
+                    </div>
+                    {% endfor %}
                 </div>
-                {% endfor %}
             </div>
         </div>
         
         <div class="section">
-            <h2>Графіки польоту</h2>
-            <div class="graphs">
-                {% if graphs.altitude %}
-                <div class="graph-container">
-                    <div class="plotly-graph">
-                        {{ graphs.altitude|safe }}
+            <button class="toggle-button" data-target="graphs-content">Графіки польоту ▼</button>
+            <div id="graphs-content" class="section-content">
+                <div class="graphs">
+                    {% if graphs.altitude %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.altitude|safe }}
+                        </div>
                     </div>
-                </div>
-                {% endif %}
-                
-                {% if graphs.speed %}
-                <div class="graph-container">
-                    <div class="plotly-graph">
-                        {{ graphs.speed|safe }}
+                    {% endif %}
+                    
+                    {% if graphs.speed %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.speed|safe }}
+                        </div>
                     </div>
-                </div>
-                {% endif %}
+                    {% endif %}
 
-                {% if graphs.throttle %}
-                <div class="graph-container">
-                    <div class="plotly-graph">
-                        {{ graphs.throttle|safe }}
+                    {% if graphs.throttle %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.throttle|safe }}
+                        </div>
                     </div>
+                    {% endif %}
                 </div>
-                {% endif %}
             </div>
         </div>
     </div>
+
+    <script>
+        // Пошук усіх кнопок toggle-button
+        const toggleButtons = document.querySelectorAll('.toggle-button');
+
+toggleButtons.forEach(button => {
+    button.addEventListener('click', () => {
+        const targetId = button.getAttribute('data-target');
+        const content = document.getElementById(targetId);
+        if (!content) return;
+
+        const isCollapsed = content.classList.contains('collapsed');
+
+        if (isCollapsed) {
+            // Розгорнути
+            content.classList.remove('collapsed');
+            button.textContent = button.textContent.replace('▲', '▼');
+        } else {
+            // Згорнути
+            content.classList.add('collapsed');
+            button.textContent = button.textContent.replace('▼', '▲');
+        }
+    });
+});
+
+    </script>
 </body>
 </html>

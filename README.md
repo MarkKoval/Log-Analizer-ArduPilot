@@ -74,7 +74,7 @@ Log-Analizer-ArduPilot/
 
 <img width="1912" height="954" alt="Image" src="https://github.com/user-attachments/assets/d8a56a6a-e6de-4041-9189-813d395297d0" />
 
-<img width="1912" height="1338" alt="Image" src="https://github.com/user-attachments/assets/fa98d99a-3f01-42e5-ad23-603c74abb825" />
+<img width="1912" height="2563" alt="Image" src="https://github.com/user-attachments/assets/ad8f8e2e-41ec-4a10-8c5a-8a25ff19ac53" />
 
 ## Contributing
 Contributions are welcome! Please open an issue or submit a pull request.

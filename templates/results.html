@@ -90,7 +90,14 @@
     <div class="container">
         <h1>Результати аналізу</h1>
         <a href="{{ url_for('upload_file') }}" class="back-link">← На головну</a>
-        
+        <div class="selected-options">
+            <strong>Обраний аналіз:</strong>
+            <span>
+                {{ ' · '.join(selected_options|list)|replace('basic', 'Основні параметри')|replace('altitude', 'Графік висоти')|replace('speed', 'Графік швидкості')|replace('throttle', 'Графік газу') }}
+            </span>
+        </div>
+
+        {% if 'basic' in selected_options %}
         <div class="section">
             <button class="toggle-button" data-target="basic-stats-content">Основні параметри польоту ▼</button>
             <div id="basic-stats-content" class="section-content">
@@ -104,7 +111,9 @@
                 </div>
             </div>
         </div>
-        
+        {% endif %}
+
+        {% if 'altitude' in selected_options or 'speed' in selected_options or 'throttle' in selected_options %}
         <div class="section">
             <button class="toggle-button" data-target="graphs-content">Графіки польоту ▼</button>
             <div id="graphs-content" class="section-content">
@@ -116,7 +125,7 @@
                         </div>
                     </div>
                     {% endif %}
-                    
+
                     {% if graphs.speed %}
                     <div class="graph-container">
                         <div class="plotly-graph">
@@ -132,9 +141,14 @@
                         </div>
                     </div>
                     {% endif %}
+
+                    {% if not graphs %}
+                    <p class="warning-message">Обрані графіки не можуть бути згенеровані для цього логу.</p>
+                    {% endif %}
                 </div>
             </div>
         </div>
+        {% endif %}
     </div>
 
     <script>

@@ -27,6 +27,28 @@
                 <label for="file" class="toggle-button">Обрати файл</label>
                 <div id="fileInfo"></div>
             </div>
+            <div class="analysis-options">
+                <h3>Що аналізуємо?</h3>
+                <div class="options-grid">
+                    <label>
+                        <input type="checkbox" name="analysis_options" value="basic" checked>
+                        Основні параметри польоту
+                    </label>
+                    <label>
+                        <input type="checkbox" name="analysis_options" value="altitude" checked>
+                        Графік висоти
+                    </label>
+                    <label>
+                        <input type="checkbox" name="analysis_options" value="speed" checked>
+                        Графік швидкості
+                    </label>
+                    <label>
+                        <input type="checkbox" name="analysis_options" value="throttle" checked>
+                        Графік газу (Throttle)
+                    </label>
+                </div>
+                <p class="options-hint">Можна вимкнути непотрібні метрики, щоб пришвидшити побудову результатів.</p>
+            </div>
             <button type="submit" class="">Аналізувати</button>
         </form>
         

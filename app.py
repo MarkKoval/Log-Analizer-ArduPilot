@@ -6,6 +6,29 @@ import uuid
 from werkzeug.utils import secure_filename
 from analyzer import LogAnalyzer
 
+DEFAULT_ANALYSIS_OPTIONS = {
+    'basic',
+    'altitude',
+    'speed',
+    'throttle',
+    'attitude',
+    'battery',
+    'vibration',
+    'rc_channels',
+    'flight_modes'
+}
+ANALYSIS_OPTIONS_ORDER = [
+    'basic',
+    'altitude',
+    'speed',
+    'throttle',
+    'attitude',
+    'battery',
+    'vibration',
+    'rc_channels',
+    'flight_modes'
+]
+
 app = Flask(__name__)
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024
@@ -34,6 +57,8 @@ def test_session():
 @app.route('/', methods=['GET', 'POST'])
 def upload_file():
     if request.method == 'POST':
+        selected_options = set(request.form.getlist('analysis_options')) or DEFAULT_ANALYSIS_OPTIONS
+
         # Перевірка чи файл був відправлений
         if 'file' not in request.files:
             flash('Не вибрано файл для завантаження')
@@ -45,17 +70,21 @@ def upload_file():
         if file.filename == '':
             flash('Не вибрано файл')
             return redirect(request.url)
-        
+
         if file and allowed_file(file.filename):
             try:
                 # Генеруємо унікальне ім'я файлу
                 filename = secure_filename(f"{uuid.uuid4()}_{file.filename}")
                 filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 file.save(filepath)
-                
+
                 # Після збереження файлу перенаправляємо на сторінку аналізу
-                return redirect(url_for('analysis_page', filename=filename))
-                
+                return redirect(url_for(
+                    'analysis_page',
+                    filename=filename,
+                    options=','.join(sorted(selected_options))
+                ))
+
             except Exception as e:
                 flash(f'Помилка збереження файлу: {str(e)}')
                 return redirect(request.url)
@@ -67,14 +96,23 @@ def analysis_page(filename):
     try:
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         analyzer = LogAnalyzer(filepath)
-        
-        basic_stats = analyzer.get_basic_statistics()
-        graphs = analyzer.generate_basic_graphs()
-        
-        return render_template('results.html', 
+
+        options_param = request.args.get('options', '')
+        selected_options_set = {opt for opt in options_param.split(',') if opt} & DEFAULT_ANALYSIS_OPTIONS
+
+        if not selected_options_set:
+            selected_options_set = DEFAULT_ANALYSIS_OPTIONS
+
+        ordered_selected = [opt for opt in ANALYSIS_OPTIONS_ORDER if opt in selected_options_set]
+
+        basic_stats = analyzer.get_basic_statistics() if 'basic' in selected_options_set else {}
+        graphs = analyzer.generate_basic_graphs(include=selected_options_set)
+
+        return render_template('results.html',
                            basic_stats=basic_stats,
                            graphs=graphs,
-                           filename=filename)
+                           filename=filename,
+                           selected_options=ordered_selected)
     
     except Exception as e:
         flash(f'Помилка аналізу файлу: {str(e)}')

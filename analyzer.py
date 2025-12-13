@@ -231,12 +231,20 @@ class LogAnalyzer:
 
         return stats
 
-    def generate_basic_graphs(self):
-        """Generate interactive flight data visualizations using Plotly"""
+    def generate_basic_graphs(self, include=None):
+        """Generate interactive flight data visualizations using Plotly
+
+        Args:
+            include: Optional set of graph identifiers to include. Supported
+                values: {'altitude', 'speed', 'throttle'}.
+        """
         graphs = {}
-        
+
         if self.data.empty:
             return graphs
+
+        include = include or {'altitude', 'speed', 'throttle'}
+        include = set(include)
         
         # Загальні налаштування для всіх графіків
         common_layout = {
@@ -255,7 +263,7 @@ class LogAnalyzer:
         }
         
         # Altitude plot
-        if 'altitude' in self.data.columns:
+        if 'altitude' in include and 'altitude' in self.data.columns:
             alt_data = self.data['altitude'].dropna()
             if not alt_data.empty:
                 fig = go.Figure()
@@ -304,7 +312,7 @@ class LogAnalyzer:
                 graphs['altitude'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
         
         # Speed plot
-        if 'speed' in self.data.columns:
+        if 'speed' in include and 'speed' in self.data.columns:
             speed_data = self.data['speed'].dropna()
             if not speed_data.empty:
                 fig = go.Figure()
@@ -353,7 +361,7 @@ class LogAnalyzer:
                 graphs['speed'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
         
         # Throttle plot
-        if 'throttle' in self.data.columns:
+        if 'throttle' in include and 'throttle' in self.data.columns:
             thr_data = self.data['throttle'].dropna()
             if not thr_data.empty:
                 fig = go.Figure()

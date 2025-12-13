@@ -93,7 +93,17 @@
         <div class="selected-options">
             <strong>Обраний аналіз:</strong>
             <span>
-                {{ ' · '.join(selected_options|list)|replace('basic', 'Основні параметри')|replace('altitude', 'Графік висоти')|replace('speed', 'Графік швидкості')|replace('throttle', 'Графік газу') }}
+                {{ ' · '.join(selected_options|list)
+                    |replace('basic', 'Основні параметри')
+                    |replace('altitude', 'Графік висоти')
+                    |replace('speed', 'Графік швидкості')
+                    |replace('throttle', 'Графік газу')
+                    |replace('attitude', 'Кути крену/тангажу')
+                    |replace('battery', 'Живлення')
+                    |replace('vibration', 'Вібрації')
+                    |replace('rc_channels', 'RC канали')
+                    |replace('flight_modes', 'Режими польоту')
+                }}
             </span>
         </div>
 
@@ -113,7 +123,7 @@
         </div>
         {% endif %}
 
-        {% if 'altitude' in selected_options or 'speed' in selected_options or 'throttle' in selected_options %}
+        {% if graphs %}
         <div class="section">
             <button class="toggle-button" data-target="graphs-content">Графіки польоту ▼</button>
             <div id="graphs-content" class="section-content">
@@ -138,6 +148,46 @@
                     <div class="graph-container">
                         <div class="plotly-graph">
                             {{ graphs.throttle|safe }}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if graphs.attitude %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.attitude|safe }}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if graphs.battery %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.battery|safe }}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if graphs.vibration %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.vibration|safe }}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if graphs.rc_channels %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.rc_channels|safe }}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if graphs.flight_modes %}
+                    <div class="graph-container">
+                        <div class="plotly-graph">
+                            {{ graphs.flight_modes|safe }}
                         </div>
                     </div>
                     {% endif %}

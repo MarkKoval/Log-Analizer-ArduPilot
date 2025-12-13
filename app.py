@@ -10,9 +10,24 @@ DEFAULT_ANALYSIS_OPTIONS = {
     'basic',
     'altitude',
     'speed',
-    'throttle'
+    'throttle',
+    'attitude',
+    'battery',
+    'vibration',
+    'rc_channels',
+    'flight_modes'
 }
-ANALYSIS_OPTIONS_ORDER = ['basic', 'altitude', 'speed', 'throttle']
+ANALYSIS_OPTIONS_ORDER = [
+    'basic',
+    'altitude',
+    'speed',
+    'throttle',
+    'attitude',
+    'battery',
+    'vibration',
+    'rc_channels',
+    'flight_modes'
+]
 
 app = Flask(__name__)
 

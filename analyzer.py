@@ -2,6 +2,8 @@ import pandas as pd
 from pymavlink import mavutil
 from sklearn.ensemble import IsolationForest
 from sklearn.cluster import KMeans
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 import io
 import base64
@@ -15,11 +17,93 @@ from plotly.subplots import make_subplots
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+class BehaviorAnalyzer:
+    """Lightweight neural network that learns flight behavior from logs."""
+
+    def __init__(self):
+        self.model = MLPClassifier(
+            hidden_layer_sizes=(32, 16),
+            activation="relu",
+            random_state=42,
+            max_iter=300,
+        )
+        self.scaler = StandardScaler()
+        self.trained = False
+
+    def _extract_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Return engineered features useful for behavior classification."""
+        features = pd.DataFrame(index=df.index)
+
+        if "altitude" in df.columns:
+            features["altitude"] = df["altitude"].interpolate().fillna(method="ffill")
+            features["altitude_rate"] = features["altitude"].diff().fillna(0)
+
+        if "speed" in df.columns:
+            features["speed"] = (df["speed"] * 3.6).interpolate().fillna(method="ffill")
+
+        if "throttle" in df.columns:
+            features["throttle"] = df["throttle"].interpolate().fillna(method="ffill")
+
+        if "VibeZ" in df.columns:
+            features["vibration"] = df["VibeZ"].interpolate().fillna(method="ffill")
+
+        return features.dropna(axis=1, how="all")
+
+    def _pseudo_labels(self, features: pd.DataFrame) -> pd.Series:
+        """Generate heuristic labels so the neural net can self-train."""
+        vertical = features.get("altitude_rate", pd.Series(0, index=features.index))
+        speed = features.get("speed", pd.Series(0, index=features.index))
+        throttle = features.get("throttle", pd.Series(0, index=features.index))
+
+        labels = pd.Series("ground/idle", index=features.index)
+
+        labels = labels.mask(vertical > 0.6, "takeoff/climb")
+        labels = labels.mask(vertical < -0.6, "descent/landing")
+        labels = labels.mask((speed > 30) & (vertical.abs() <= 0.6), "cruise")
+        labels = labels.mask((speed <= 10) & (throttle.between(5, 40)), "hover/loiter")
+
+        return labels.fillna("ground/idle")
+
+    def train_from_log(self, df: pd.DataFrame) -> None:
+        """Train the neural network on the current log, if enough samples."""
+        features = self._extract_features(df)
+        if features.empty or len(features) < 30:
+            logger.info("Недостатньо даних для навчання моделі поведінки")
+            return
+
+        labels = self._pseudo_labels(features)
+
+        X = self.scaler.fit_transform(features.fillna(0))
+        self.model.fit(X, labels)
+        self.trained = True
+        logger.info("Модель поведінки навчена на поточному логі (%d зразків)", len(labels))
+
+    def analyze(self, df: pd.DataFrame) -> dict:
+        """Predict behavior distribution and high-level summary."""
+        features = self._extract_features(df)
+        if features.empty or not self.trained:
+            return {}
+
+        X = self.scaler.transform(features.fillna(0))
+        predictions = pd.Series(self.model.predict(X))
+
+        distribution = predictions.value_counts(normalize=True).sort_values(ascending=False)
+        top_behavior = distribution.index[0]
+        confidence = distribution.iloc[0] * 100
+
+        return {
+            "summary": f"Переважний режим: {top_behavior} (ймовірність {confidence:.1f}%).",
+            "distribution": distribution.to_dict(),
+        }
+
+
 class LogAnalyzer:
     def __init__(self, file_path):
         self.file_path = file_path
         self.data = self._parse_log()
         self._preprocess_data()
+        self.behavior_model = BehaviorAnalyzer()
     
     def _parse_log(self):
         """Parse binary log file from ArduPilot"""
@@ -430,6 +514,19 @@ class LogAnalyzer:
                     _add_stat('mode_duration_breakdown', ', '.join([
                         f"{m}: {t/60:.1f} хв" for m, t in duration_by_mode.items()
                     ]))
+
+        # Behavior analysis via lightweight neural network
+        try:
+            self.behavior_model.train_from_log(self.data)
+            behavior = self.behavior_model.analyze(self.data)
+            if behavior:
+                stats['behavior_summary'] = behavior['summary']
+                breakdown_parts = [
+                    f"{label}: {share * 100:.1f}%" for label, share in behavior['distribution'].items()
+                ]
+                stats['behavior_breakdown'] = ", ".join(breakdown_parts)
+        except Exception:
+            logger.warning("Не вдалося побудувати модель поведінки:\n%s", traceback.format_exc())
 
         return stats
 

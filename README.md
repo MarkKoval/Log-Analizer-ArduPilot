@@ -1,83 +1,55 @@
 # ArduPilot Log Analyzer
 
-![Python](https://img.shields.io/badge/python-3.8+-blue.svg) 
+Web app for reviewing ArduPilot `.bin` flight logs with grouped metrics and interactive charts.
 
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+## What It Does
 
-A web-based tool for analyzing flight logs from ArduPilot-powered drones, providing both basic statistics and advanced AI-powered insights.
+- Uploads a `.bin` log through a Flask UI
+- Extracts key telemetry from ArduPilot messages
+- Builds grouped flight statistics
+- Renders interactive Plotly charts for altitude, speed, throttle, attitude, battery, vibration, RC input, and flight modes
+- Adds a lightweight behavior summary based on the current log
 
-## Features
+## Requirements
 
-- 📊 Basic flight statistics (altitude, speed, duration, distance)
-- 🖼️ Interactive flight parameter graphs
-- 🤖 AI-powered anomaly detection and flight pattern clustering **(in dev)**
-- 🌍 GPS trajectory visualization **(in dev)**
-- 🚀 Optimized for large log files
-- 🕸️ Web-based interface
+- Python 3.8+
+- `pip`
 
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/MarkKoval/Log-Analizer-ArduPilot.git
-cd Log-Analizer-ArduPilot
-```
-
-2. Install dependencies:
+## Install
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Run the application:
+## Run
 
 ```bash
 python app.py
 ```
 
-4. Open in browser:
+Then open:
+
 ```text
 http://localhost:5000
 ```
 
-## Usage
-- Upload your ArduPilot .bin log file
-- View basic flight statistics
-- Explore interactive graphs
-- Analyze flight patterns with AI tools
+## Project Structure
 
-## Supported Log Parameters
-- Altitude (BARO)
-- Speed (GPS)
-- Throttle
-- GPS coordinates
-- Battery voltage/current
-- Vibration data
-- Flight modes
-
-## File Structure
-```bash
-Log-Analizer-ArduPilot/
-├── app.py                # Main Flask application
-├── analyzer.py           # Core analysis logic
-├── static/               # Static files (CSS, JS)
-│   ├── css/
-│   └── js/
-├── templates/            # HTML templates
-│   ├── index.html
-│   └── results.html
-├── requirements.txt      # Python dependencies
-└── README.md             # This file
+```text
+app.py
+analyzer.py
+requirements.txt
+static/
+  css/styles.css
+  js/scripts.js
+templates/
+  base.html
+  index.html
+  results.html
 ```
 
-## Screenshots
+## Notes
 
-<img width="1912" height="954" alt="Image" src="https://github.com/user-attachments/assets/d8a56a6a-e6de-4041-9189-813d395297d0" />
-
-<img width="1912" height="2563" alt="Image" src="https://github.com/user-attachments/assets/ad8f8e2e-41ec-4a10-8c5a-8a25ff19ac53" />
-
-## Contributing
-Contributions are welcome! Please open an issue or submit a pull request.
-
-## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+- Upload size defaults to `512 MB`.
+- You can change the upload limit with `LOG_ANALYZER_MAX_UPLOAD_MB`.
+- You can set `FLASK_SECRET_KEY` if you do not want to use the local default key.

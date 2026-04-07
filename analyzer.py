@@ -1,25 +1,20 @@
+import logging
+import traceback
+
+import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+from geopy.distance import geodesic
+from plotly.subplots import make_subplots
 from pymavlink import mavutil
-from sklearn.ensemble import IsolationForest
-from sklearn.cluster import KMeans
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
-import numpy as np
-import io
-import base64
-import logging
-from datetime import datetime, timedelta
-from geopy.distance import geodesic
-import traceback
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 class BehaviorAnalyzer:
-    """Lightweight neural network that learns flight behavior from logs."""
+    """Lightweight classifier trained from the current log's telemetry."""
 
     def __init__(self):
         self.model = MLPClassifier(
@@ -32,834 +27,657 @@ class BehaviorAnalyzer:
         self.trained = False
 
     def _extract_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Return engineered features useful for behavior classification."""
         features = pd.DataFrame(index=df.index)
 
         if "altitude" in df.columns:
-            features["altitude"] = df["altitude"].interpolate().fillna(method="ffill")
-            features["altitude_rate"] = features["altitude"].diff().fillna(0)
+            altitude = pd.to_numeric(df["altitude"], errors="coerce").interpolate().ffill()
+            features["altitude"] = altitude
+            features["altitude_rate"] = altitude.diff().fillna(0)
 
         if "speed" in df.columns:
-            features["speed"] = (df["speed"] * 3.6).interpolate().fillna(method="ffill")
+            features["speed"] = (
+                pd.to_numeric(df["speed"], errors="coerce").interpolate().ffill() * 3.6
+            )
 
         if "throttle" in df.columns:
-            features["throttle"] = df["throttle"].interpolate().fillna(method="ffill")
+            features["throttle"] = pd.to_numeric(
+                df["throttle"], errors="coerce"
+            ).interpolate().ffill()
 
         if "VibeZ" in df.columns:
-            features["vibration"] = df["VibeZ"].interpolate().fillna(method="ffill")
+            features["vibration"] = pd.to_numeric(
+                df["VibeZ"], errors="coerce"
+            ).interpolate().ffill()
 
         return features.dropna(axis=1, how="all")
 
     def _pseudo_labels(self, features: pd.DataFrame) -> pd.Series:
-        """Generate heuristic labels so the neural net can self-train."""
         vertical = features.get("altitude_rate", pd.Series(0, index=features.index))
         speed = features.get("speed", pd.Series(0, index=features.index))
         throttle = features.get("throttle", pd.Series(0, index=features.index))
 
         labels = pd.Series("ground/idle", index=features.index)
-
         labels = labels.mask(vertical > 0.6, "takeoff/climb")
         labels = labels.mask(vertical < -0.6, "descent/landing")
         labels = labels.mask((speed > 30) & (vertical.abs() <= 0.6), "cruise")
         labels = labels.mask((speed <= 10) & (throttle.between(5, 40)), "hover/loiter")
-
         return labels.fillna("ground/idle")
 
     def train_from_log(self, df: pd.DataFrame) -> None:
-        """Train the neural network on the current log, if enough samples."""
         features = self._extract_features(df)
         if features.empty or len(features) < 30:
-            logger.info("Недостатньо даних для навчання моделі поведінки")
+            logger.info("Not enough data to train the behavior model.")
             return
 
         labels = self._pseudo_labels(features)
-
-        X = self.scaler.fit_transform(features.fillna(0))
-        self.model.fit(X, labels)
+        self.model.fit(self.scaler.fit_transform(features.fillna(0)), labels)
         self.trained = True
-        logger.info("Модель поведінки навчена на поточному логі (%d зразків)", len(labels))
 
     def analyze(self, df: pd.DataFrame) -> dict:
-        """Predict behavior distribution and high-level summary."""
         features = self._extract_features(df)
         if features.empty or not self.trained:
             return {}
 
-        X = self.scaler.transform(features.fillna(0))
-        predictions = pd.Series(self.model.predict(X))
-
+        predictions = pd.Series(self.model.predict(self.scaler.transform(features.fillna(0))))
         distribution = predictions.value_counts(normalize=True).sort_values(ascending=False)
         top_behavior = distribution.index[0]
         confidence = distribution.iloc[0] * 100
 
         return {
-            "summary": f"Переважний режим: {top_behavior} (ймовірність {confidence:.1f}%).",
+            "summary": f"Dominant behavior: {top_behavior} ({confidence:.1f}% confidence).",
             "distribution": distribution.to_dict(),
         }
 
 
 class LogAnalyzer:
-    def __init__(self, file_path):
+    GRAPH_OPTIONS = {
+        "altitude",
+        "speed",
+        "throttle",
+        "attitude",
+        "battery",
+        "vibration",
+        "rc_channels",
+        "flight_modes",
+    }
+
+    def __init__(self, file_path: str):
         self.file_path = file_path
         self.data = self._parse_log()
         self._preprocess_data()
         self.behavior_model = BehaviorAnalyzer()
-    
-    def _parse_log(self):
-        """Parse binary log file from ArduPilot"""
-        logger.info("Starting binary log parsing...")
-        
-        try:
-            mlog = mavutil.mavlink_connection(self.file_path)
-            data = []
-            
-            msg_types = [
-                'GPS', 'GPS2', 'ATT', 'CTUN',
-                'NKF1', 'BARO', 'BAT', 'MODE',
-                'POWR', 'CURR', 'VIBE', 'RCIN',
-                'RCOU'
-            ]
-            
-            start_time = None
-            while True:
-                msg = mlog.recv_match(type=msg_types, blocking=False)
-                if msg is None:
-                    break
-                
-                msg_dict = msg.to_dict()
-                msg_type = msg.get_type()
-                msg_dict['msg_type'] = msg_type
-                
-                if 'TimeUS' in msg_dict:
-                    timestamp = msg_dict['TimeUS'] / 1e6
-                    if start_time is None:
-                        start_time = datetime.now() - timedelta(seconds=timestamp)
-                    msg_dict['timestamp'] = start_time + timedelta(seconds=timestamp)
-                
-                data.append(msg_dict)
-            
-            if not data:
-                raise ValueError("No data found in log file")
-                
-            return pd.DataFrame(data)
-            
-        except Exception as e:
-            logger.error(f"Log parsing error: {str(e)}")
-            raise
 
-    def estimate_distance_from_speed(self):
-        if 'speed' not in self.data.columns:
-            return None
+    def _parse_log(self) -> pd.DataFrame:
+        logger.info("Starting binary log parsing for %s", self.file_path)
+        msg_types = [
+            "GPS",
+            "GPS2",
+            "ATT",
+            "CTUN",
+            "NKF1",
+            "BARO",
+            "BAT",
+            "MODE",
+            "POWR",
+            "CURR",
+            "VIBE",
+            "RCIN",
+            "RCOU",
+        ]
 
-        df = self.data[['speed']].dropna()
+        connection = mavutil.mavlink_connection(self.file_path)
+        rows = []
 
-        if df.empty or len(df) < 2:
-            return None
+        while True:
+            msg = connection.recv_match(type=msg_types, blocking=False)
+            if msg is None:
+                break
 
-        df = df.copy()
-        df['time_diff'] = df.index.to_series().diff().dt.total_seconds().fillna(0)
-        df['distance'] = df['speed'] * df['time_diff']  # m/s * s = meters
-        total_distance_m = df['distance'].sum()
-        return total_distance_m
+            msg_dict = msg.to_dict()
+            msg_dict["msg_type"] = msg.get_type()
+            rows.append(msg_dict)
 
-    def _preprocess_data(self):
-        """Preprocess and clean the log data"""
+        if not rows:
+            raise ValueError("No supported telemetry messages were found in this log.")
+
+        return pd.DataFrame(rows)
+
+    def _preprocess_data(self) -> None:
         if self.data.empty:
             return
 
-        # Convert numeric columns
-        numeric_cols = ['Alt', 'Spd', 'Roll', 'Pitch', 'Yaw', 'Volt', 'Curr',
-                       'Lat', 'Lng', 'Thr', 'ThrOut', 'DAlt', 'DSAlt', 'SAlt',
-                       'NSats', 'HDop']
+        numeric_cols = [
+            "Alt",
+            "Spd",
+            "Roll",
+            "Pitch",
+            "Yaw",
+            "Volt",
+            "Curr",
+            "Lat",
+            "Lng",
+            "Thr",
+            "ThO",
+            "ThD",
+            "DAlt",
+            "DSAlt",
+            "SAlt",
+            "NSats",
+            "HDop",
+            "VibeX",
+            "VibeY",
+            "VibeZ",
+        ]
+        numeric_cols.extend([f"C{i}" for i in range(1, 13)])
+        numeric_cols.extend([f"Servo{i}" for i in range(1, 13)])
 
-        rc_in_channels = [f'C{i}' for i in range(1, 13)]
-        rc_out_channels = [f'C{i}Out' for i in range(1, 13)]
-        numeric_cols.extend(rc_in_channels)
-        numeric_cols.extend(rc_out_channels)
         for col in numeric_cols:
             if col in self.data.columns:
-                self.data[col] = pd.to_numeric(self.data[col], errors='coerce')
+                self.data[col] = pd.to_numeric(self.data[col], errors="coerce")
 
-        # Process timestamps
-        if 'TimeUS' in self.data.columns:
-            self.data['timestamp'] = pd.to_datetime(self.data['TimeUS'], unit='us')
-            self.data.set_index('timestamp', inplace=True)
-            self.data.sort_index(inplace=True)
+        if "TimeUS" in self.data.columns:
+            self.data["timestamp"] = pd.to_datetime(self.data["TimeUS"], unit="us")
+            self.data = self.data.set_index("timestamp").sort_index()
 
-        # Extract altitude from BARO
-        if 'BARO' in self.data['msg_type'].unique():
-            baro_mask = self.data['msg_type'] == 'BARO'
-            self.data.loc[baro_mask, 'altitude'] = pd.to_numeric(
-                self.data.loc[baro_mask, 'Alt'], errors='coerce'
-            )
+        msg_types = set(self.data["msg_type"].dropna().unique())
 
-        # Extract speed from GPS
-        if 'GPS' in self.data['msg_type'].unique():
-            gps_mask = self.data['msg_type'] == 'GPS'
-            self.data.loc[gps_mask, 'speed'] = pd.to_numeric(
-                self.data.loc[gps_mask, 'Spd'], errors='coerce'
-            )
-            # Convert coordinates from degrees*1e7 to decimal degrees
-            self.data.loc[gps_mask, 'lat'] = self.data.loc[gps_mask, 'Lat'] / 1e7
-            self.data.loc[gps_mask, 'lon'] = self.data.loc[gps_mask, 'Lng'] / 1e7
+        if "BARO" in msg_types and "Alt" in self.data.columns:
+            mask = self.data["msg_type"] == "BARO"
+            self.data.loc[mask, "altitude"] = pd.to_numeric(self.data.loc[mask, "Alt"], errors="coerce")
 
-        # Extract throttle from CTUN - with existence check
-        if 'CTUN' in self.data['msg_type'].unique():
-            ctun_mask = self.data['msg_type'] == 'CTUN'
-            # Using ThO as throttle
-            if 'ThO' in self.data.columns:
-                self.data.loc[ctun_mask, 'throttle'] = pd.to_numeric(self.data.loc[ctun_mask, 'ThO'], errors='coerce')
-                logger.info("Throttle extracted from CTUN.ThO column")
-            elif 'ThD' in self.data.columns:
-                self.data.loc[ctun_mask, 'throttle'] = pd.to_numeric(self.data.loc[ctun_mask, 'ThD'], errors='coerce')
-                logger.info("Throttle extracted from CTUN.ThD column")
+        if "GPS" in msg_types:
+            mask = self.data["msg_type"] == "GPS"
+            if "Spd" in self.data.columns:
+                self.data.loc[mask, "speed"] = pd.to_numeric(self.data.loc[mask, "Spd"], errors="coerce")
+            if "Lat" in self.data.columns and "Lng" in self.data.columns:
+                self.data.loc[mask, "lat"] = self.data.loc[mask, "Lat"] / 1e7
+                self.data.loc[mask, "lon"] = self.data.loc[mask, "Lng"] / 1e7
 
-        # DEBUG: Force print throttle info even if empty
-        if 'throttle' in self.data.columns:
-            print("Throttle column present.")
-            print(self.data['throttle'].describe())
-        else:
-            print("Throttle column MISSING.")
+        if "CTUN" in msg_types:
+            mask = self.data["msg_type"] == "CTUN"
+            for source in ("ThO", "ThD", "Thr"):
+                if source in self.data.columns:
+                    self.data.loc[mask, "throttle"] = pd.to_numeric(
+                        self.data.loc[mask, source], errors="coerce"
+                    )
+                    break
 
-        # Extract RC channels from RCIN and RCOU
-        rc_in_channels = [f'C{i}' for i in range(1, 13)]
-        rc_out_channels = [f'C{i}Out' for i in range(1, 13)]
-
-        if 'RCIN' in self.data['msg_type'].unique():
-            rcin_mask = self.data['msg_type'] == 'RCIN'
-            for col in rc_in_channels:
-                if col in self.data.columns:
-                    self.data.loc[rcin_mask, f'rcin_{col}'] = pd.to_numeric(
-                        self.data.loc[rcin_mask, col], errors='coerce'
+        if "RCIN" in msg_types:
+            mask = self.data["msg_type"] == "RCIN"
+            for i in range(1, 13):
+                source = f"C{i}"
+                if source in self.data.columns:
+                    self.data.loc[mask, f"rcin_C{i}"] = pd.to_numeric(
+                        self.data.loc[mask, source], errors="coerce"
                     )
 
-        if 'RCOU' in self.data['msg_type'].unique():
-            rcou_mask = self.data['msg_type'] == 'RCOU'
-            for col in rc_out_channels:
-                src_col = col.replace('Out', '')
-                if src_col in self.data.columns:
-                    self.data.loc[rcou_mask, f'rcout_{src_col}'] = pd.to_numeric(
-                        self.data.loc[rcou_mask, src_col], errors='coerce'
-                    )
+        if "RCOU" in msg_types:
+            mask = self.data["msg_type"] == "RCOU"
+            for i in range(1, 13):
+                for source in (f"C{i}", f"Servo{i}"):
+                    if source in self.data.columns:
+                        self.data.loc[mask, f"rcout_C{i}"] = pd.to_numeric(
+                            self.data.loc[mask, source], errors="coerce"
+                        )
+                        break
 
-        # Flight mode extraction
-        if 'MODE' in self.data['msg_type'].unique():
-            mode_mask = self.data['msg_type'] == 'MODE'
-            if 'Mode' in self.data.columns:
-                self.data.loc[mode_mask, 'flight_mode'] = self.data.loc[mode_mask, 'Mode']
-            elif 'ModeNum' in self.data.columns:
-                self.data.loc[mode_mask, 'flight_mode'] = self.data.loc[mode_mask, 'ModeNum']
+        if "MODE" in msg_types:
+            mask = self.data["msg_type"] == "MODE"
+            for source in ("Mode", "ModeNum"):
+                if source in self.data.columns:
+                    self.data.loc[mask, "flight_mode"] = self.data.loc[mask, source]
+                    break
 
-        # Interpolate numeric data
         numeric_data = self.data.select_dtypes(include=[np.number])
         if not numeric_data.empty:
-            self.data[numeric_data.columns] = numeric_data.interpolate(method='time')
+            method = "time" if isinstance(self.data.index, pd.DatetimeIndex) else "linear"
+            self.data[numeric_data.columns] = numeric_data.interpolate(method=method)
 
-        # --- Trim log to first moment when throttle >= 10% ---
-        if 'throttle' in self.data.columns:
-            throttle_data = self.data['throttle'].dropna()
-            
-            start_mask = throttle_data >= 40
-            end_mask = throttle_data <= 0.5
-        
-            if start_mask.any() and end_mask.any():
-                first_idx = start_mask.idxmax()
-                last_idx = end_mask[end_mask.index > first_idx].index[-1]  # guaranteed after first_idx
-        
-                print(f"Trimming from {first_idx} to {last_idx}")
-        
-                # Make sure last_idx is really after first_idx
-                if last_idx > first_idx:
-                    self.data = self.data.loc[first_idx:last_idx]
-                else:
-                    print("End index is before start index — trimming skipped.")
-            else:
-                print("Throttle thresholds not found for trimming.")
-        else:
-            print("Throttle column missing.")
+        self._trim_to_active_window()
+
+    def _trim_to_active_window(self) -> None:
+        if "throttle" not in self.data.columns:
+            return
+
+        throttle = pd.to_numeric(self.data["throttle"], errors="coerce").dropna()
+        if throttle.empty:
+            return
+
+        start_candidates = throttle[throttle >= 40]
+        if start_candidates.empty:
+            return
+
+        first_idx = start_candidates.index[0]
+        end_candidates = throttle[(throttle.index > first_idx) & (throttle <= 0.5)]
+        if end_candidates.empty:
+            return
+
+        last_idx = end_candidates.index[-1]
+        if last_idx > first_idx:
+            logger.info("Trimming active flight window from %s to %s", first_idx, last_idx)
+            self.data = self.data.loc[first_idx:last_idx]
+
+    def _time_seconds(self, index: pd.Index) -> np.ndarray:
+        if isinstance(index, pd.DatetimeIndex):
+            return (index - index[0]).total_seconds().to_numpy()
+        return np.arange(len(index), dtype=float)
+
+    def _series(self, column: str) -> pd.Series:
+        if column not in self.data.columns:
+            return pd.Series(dtype=float)
+        return pd.to_numeric(self.data[column], errors="coerce").dropna()
+
+    def _add_stat(self, stats: dict, key: str, value) -> None:
+        if value is None:
+            return
+        if isinstance(value, float) and pd.isna(value):
+            return
+        stats[key] = value
+
+    def estimate_distance_from_speed(self):
+        if "speed" not in self.data.columns or not isinstance(self.data.index, pd.DatetimeIndex):
+            return None
+
+        series = pd.to_numeric(self.data["speed"], errors="coerce").dropna()
+        if len(series) < 2:
+            return None
+
+        seconds = self._time_seconds(series.index)
+        distance_m = np.trapz(series.to_numpy(), x=seconds)
+        return float(distance_m)
+
+    def _distance_from_gps(self):
+        if not {"lat", "lon"} <= set(self.data.columns):
+            return None
+
+        gps_points = self.data[
+            (self.data["msg_type"] == "GPS")
+            & (self.data["lat"].abs() > 0.001)
+            & (self.data["lon"].abs() > 0.001)
+        ][["lat", "lon"]].dropna()
+
+        if len(gps_points) < 2:
+            return None
+
+        distance_km = 0.0
+        points = gps_points.to_numpy()
+        for idx in range(1, len(points)):
+            try:
+                distance_km += geodesic(points[idx - 1], points[idx]).km
+            except Exception:
+                continue
+        return distance_km or None
 
     def get_basic_statistics(self):
-        """Calculate extended flight statistics (50+ параметрів)"""
         stats = {}
-
         if self.data.empty:
             return stats
 
-        def _add_stat(key, value, suffix=""):
-            if value is None or (isinstance(value, (float, int)) and pd.isna(value)):
-                return
-            stats[key] = f"{value}{suffix}" if suffix else value
-
-        # Flight duration
         if isinstance(self.data.index, pd.DatetimeIndex) and len(self.data.index) > 1:
             duration = self.data.index[-1] - self.data.index[0]
-            _add_stat('flight_duration', str(duration))
-            _add_stat('log_start_time', self.data.index[0].strftime('%Y-%m-%d %H:%M:%S'))
-            _add_stat('log_end_time', self.data.index[-1].strftime('%Y-%m-%d %H:%M:%S'))
+            self._add_stat(stats, "flight_duration", str(duration))
+            self._add_stat(stats, "log_start_time", self.data.index[0].strftime("%Y-%m-%d %H:%M:%S"))
+            self._add_stat(stats, "log_end_time", self.data.index[-1].strftime("%Y-%m-%d %H:%M:%S"))
 
-        distance_est = self.estimate_distance_from_speed()
-        if distance_est:
-            _add_stat('estimated_distance_m', f"{distance_est:.1f} м")
-            _add_stat('estimated_distance_km', f"{distance_est / 1000:.2f} км")
+        gps_distance_km = self._distance_from_gps()
+        speed_distance_m = self.estimate_distance_from_speed()
+        if gps_distance_km is not None:
+            self._add_stat(stats, "total_distance_km", f"{gps_distance_km:.2f} km")
+            self._add_stat(stats, "total_distance_m", f"{gps_distance_km * 1000:.0f} m")
+        elif speed_distance_m is not None:
+            self._add_stat(stats, "total_distance_km", f"{speed_distance_m / 1000:.2f} km")
+            self._add_stat(stats, "total_distance_m", f"{speed_distance_m:.0f} m")
 
-        # Calculate distance traveled
-        distance_km = None
-        if 'lat' in self.data.columns and 'lon' in self.data.columns:
-            gps_points = self.data[
-                (self.data['msg_type'] == 'GPS') &
-                (self.data['lat'].abs() > 0.001) &
-                (self.data['lon'].abs() > 0.001)
-            ][['lat', 'lon']].dropna()
+        if speed_distance_m is not None:
+            self._add_stat(stats, "estimated_distance_km", f"{speed_distance_m / 1000:.2f} km")
+            self._add_stat(stats, "estimated_distance_m", f"{speed_distance_m:.0f} m")
 
-            if len(gps_points) > 1:
-                points = gps_points.to_numpy()
-                distance_km = 0.0
+        altitude = self._series("altitude")
+        if not altitude.empty:
+            self._add_stat(stats, "max_altitude", f"{altitude.max():.2f} m")
+            self._add_stat(stats, "min_altitude", f"{altitude.min():.2f} m")
+            self._add_stat(stats, "avg_altitude", f"{altitude.mean():.2f} m")
+            self._add_stat(stats, "altitude_range", f"{(altitude.max() - altitude.min()):.2f} m")
+            self._add_stat(stats, "start_altitude", f"{altitude.iloc[0]:.2f} m")
+            self._add_stat(stats, "end_altitude", f"{altitude.iloc[-1]:.2f} m")
+            if isinstance(altitude.index, pd.DatetimeIndex) and len(altitude) > 1:
+                seconds = altitude.index.to_series().diff().dt.total_seconds().replace(0, pd.NA)
+                climb = (altitude.diff() / seconds).dropna()
+                if not climb.empty:
+                    self._add_stat(stats, "max_climb_rate", f"{climb.max():.2f} m/s")
+                    self._add_stat(stats, "min_climb_rate", f"{climb.min():.2f} m/s")
 
-                for i in range(1, len(points)):
-                    try:
-                        distance_km += geodesic(points[i-1], points[i]).km
-                    except Exception:
-                        continue
+        speed = self._series("speed")
+        if not speed.empty:
+            kmh = speed * 3.6
+            self._add_stat(stats, "max_speed", f"{kmh.max():.2f} km/h")
+            self._add_stat(stats, "min_speed", f"{kmh.min():.2f} km/h")
+            self._add_stat(stats, "avg_speed", f"{kmh.mean():.2f} km/h")
+            self._add_stat(stats, "speed_range", f"{(kmh.max() - kmh.min()):.2f} km/h")
+            self._add_stat(stats, "start_speed", f"{kmh.iloc[0]:.2f} km/h")
+            self._add_stat(stats, "end_speed", f"{kmh.iloc[-1]:.2f} km/h")
 
-                _add_stat('total_distance_km', f"{distance_km:.2f} км")
-                _add_stat('total_distance_m', f"{distance_km * 1000:.1f} м")
+        throttle = self._series("throttle")
+        if not throttle.empty:
+            self._add_stat(stats, "max_throttle", f"{throttle.max():.1f}%")
+            self._add_stat(stats, "min_throttle", f"{throttle.min():.1f}%")
+            self._add_stat(stats, "avg_throttle", f"{throttle.mean():.1f}%")
+            self._add_stat(stats, "time_over_80pct", f"{(throttle > 80).mean() * 100:.1f}%")
+            self._add_stat(stats, "time_below_20pct", f"{(throttle < 20).mean() * 100:.1f}%")
 
-        if not distance_km or distance_km == 0.0:
-            if distance_est:
-                _add_stat('total_distance_m', f"{distance_est:.1f} м")
-                _add_stat('total_distance_km', f"{distance_est / 1000:.2f} км")
+        voltage = self._series("Volt")
+        if not voltage.empty:
+            self._add_stat(stats, "max_voltage", f"{voltage.max():.2f} V")
+            self._add_stat(stats, "min_voltage", f"{voltage.min():.2f} V")
+            self._add_stat(stats, "avg_voltage", f"{voltage.mean():.2f} V")
+            self._add_stat(stats, "start_voltage", f"{voltage.iloc[0]:.2f} V")
+            self._add_stat(stats, "end_voltage", f"{voltage.iloc[-1]:.2f} V")
+            self._add_stat(stats, "voltage_drop", f"{(voltage.iloc[0] - voltage.iloc[-1]):.2f} V")
 
-        # Altitude statistics
-        if 'altitude' in self.data.columns:
-            alt_data = self.data['altitude'].dropna()
-            if not alt_data.empty:
-                _add_stat('max_altitude', f"{alt_data.max():.2f} м")
-                _add_stat('min_altitude', f"{alt_data.min():.2f} м")
-                _add_stat('avg_altitude', f"{alt_data.mean():.2f} м")
-                _add_stat('median_altitude', f"{alt_data.median():.2f} м")
-                _add_stat('altitude_std', f"{alt_data.std():.2f} м")
-                _add_stat('altitude_variance', f"{alt_data.var():.2f} м²")
-                _add_stat('altitude_25th', f"{alt_data.quantile(0.25):.2f} м")
-                _add_stat('altitude_75th', f"{alt_data.quantile(0.75):.2f} м")
-                _add_stat('altitude_range', f"{alt_data.max() - alt_data.min():.2f} м")
-                _add_stat('start_altitude', f"{alt_data.iloc[0]:.2f} м")
-                _add_stat('end_altitude', f"{alt_data.iloc[-1]:.2f} м")
+        current = self._series("Curr")
+        if not current.empty:
+            self._add_stat(stats, "max_current", f"{current.max():.2f} A")
+            self._add_stat(stats, "avg_current", f"{current.mean():.2f} A")
+            if isinstance(current.index, pd.DatetimeIndex) and len(current) > 1:
+                hours = (current.index - current.index[0]).total_seconds() / 3600.0
+                self._add_stat(stats, "consumed_ah", f"{np.trapz(current.to_numpy(), x=hours):.2f} Ah")
+            if not voltage.empty:
+                power = pd.concat(
+                    [current.rename("current"), voltage.rename("voltage")],
+                    axis=1,
+                ).dropna()
+                if not power.empty:
+                    self._add_stat(
+                        stats,
+                        "avg_power_w",
+                        f"{(power['current'] * power['voltage']).mean():.2f} W",
+                    )
 
-                if isinstance(alt_data.index, pd.DatetimeIndex) and len(alt_data.index) > 1:
-                    dt_seconds = alt_data.index.to_series().diff().dt.total_seconds().replace(0, pd.NA)
-                    climb_rate = alt_data.diff() / dt_seconds
-                    climb_rate = climb_rate.dropna()
-                    if not climb_rate.empty:
-                        _add_stat('max_climb_rate', f"{climb_rate.max():.2f} м/с")
-                        _add_stat('min_climb_rate', f"{climb_rate.min():.2f} м/с")
-                        _add_stat('avg_climb_rate', f"{climb_rate.mean():.2f} м/с")
-                        _add_stat('climb_rate_std', f"{climb_rate.std():.2f} м/с")
-                        _add_stat('time_above_10m', f"{(alt_data > 10).mean() * 100:.1f}% часу")
-                        _add_stat('time_below_5m', f"{(alt_data < 5).mean() * 100:.1f}% часу")
+        sats = self._series("NSats")
+        if not sats.empty:
+            self._add_stat(stats, "gps_satellites_avg", f"{sats.mean():.1f}")
+            self._add_stat(stats, "gps_satellites_min", f"{sats.min():.0f}")
+            self._add_stat(stats, "gps_satellites_max", f"{sats.max():.0f}")
 
-        # Speed statistics
-        if 'speed' in self.data.columns:
-            speed_data = self.data['speed'].dropna()
-            if not speed_data.empty:
-                kmh = speed_data * 3.6
-                _add_stat('max_speed', f"{kmh.max():.2f} км/год")
-                _add_stat('min_speed', f"{kmh.min():.2f} км/год")
-                _add_stat('avg_speed', f"{kmh.mean():.2f} км/год")
-                _add_stat('median_speed', f"{kmh.median():.2f} км/год")
-                _add_stat('speed_std', f"{kmh.std():.2f} км/год")
-                _add_stat('speed_variance', f"{kmh.var():.2f} (км/год)²")
-                _add_stat('speed_p95', f"{kmh.quantile(0.95):.2f} км/год")
-                _add_stat('speed_p05', f"{kmh.quantile(0.05):.2f} км/год")
-                _add_stat('speed_range', f"{kmh.max() - kmh.min():.2f} км/год")
-                _add_stat('start_speed', f"{kmh.iloc[0]:.2f} км/год")
-                _add_stat('end_speed', f"{kmh.iloc[-1]:.2f} км/год")
+        hdop = self._series("HDop")
+        if not hdop.empty:
+            self._add_stat(stats, "gps_hdop_avg", f"{hdop.mean():.2f}")
+            self._add_stat(stats, "gps_hdop_min", f"{hdop.min():.2f}")
+            self._add_stat(stats, "gps_hdop_max", f"{hdop.max():.2f}")
 
-                if isinstance(speed_data.index, pd.DatetimeIndex) and len(speed_data.index) > 1:
-                    dt_seconds = speed_data.index.to_series().diff().dt.total_seconds().replace(0, pd.NA)
-                    acceleration = speed_data.diff() / dt_seconds
-                    acceleration = acceleration.dropna()
-                    if not acceleration.empty:
-                        _add_stat('max_acceleration', f"{(acceleration.max() * 3.6):.2f} (км/год)/с")
-                        _add_stat('min_acceleration', f"{(acceleration.min() * 3.6):.2f} (км/год)/с")
-                        _add_stat('avg_acceleration', f"{(acceleration.mean() * 3.6):.2f} (км/год)/с")
-                        _add_stat('acceleration_std', f"{(acceleration.std() * 3.6):.2f} (км/год)/с")
-                        _add_stat('time_above_50kmh', f"{(kmh > 50).mean() * 100:.1f}% часу")
-                        _add_stat('time_below_10kmh', f"{(kmh < 10).mean() * 100:.1f}% часу")
+        for axis in ("Roll", "Pitch", "Yaw"):
+            series = self._series(axis)
+            if not series.empty:
+                axis_key = axis.lower()
+                self._add_stat(stats, f"max_{axis_key}", f"{series.max():.1f} deg")
+                self._add_stat(stats, f"min_{axis_key}", f"{series.min():.1f} deg")
+                self._add_stat(stats, f"avg_{axis_key}", f"{series.mean():.1f} deg")
 
-        # Throttle statistics (only if available)
-        if 'throttle' in self.data.columns:
-            thr_data = self.data['throttle'].dropna()
-            if not thr_data.empty:
-                _add_stat('max_throttle', f"{thr_data.max():.1f}%")
-                _add_stat('min_throttle', f"{thr_data.min():.1f}%")
-                _add_stat('avg_throttle', f"{thr_data.mean():.1f}%")
-                _add_stat('median_throttle', f"{thr_data.median():.1f}%")
-                _add_stat('throttle_std', f"{thr_data.std():.2f}%")
-                _add_stat('throttle_range', f"{thr_data.max() - thr_data.min():.1f}%")
-                _add_stat('time_over_80pct', f"{(thr_data > 80).mean() * 100:.1f}% часу")
-                _add_stat('time_below_20pct', f"{(thr_data < 20).mean() * 100:.1f}% часу")
+        vibration_columns = [col for col in ("VibeX", "VibeY", "VibeZ") if col in self.data.columns]
+        if vibration_columns:
+            vibration = pd.DataFrame(
+                {col: pd.to_numeric(self.data[col], errors="coerce") for col in vibration_columns}
+            ).dropna(how="all")
+            if not vibration.empty:
+                self._add_stat(stats, "vibration_peak", f"{vibration.max().max():.2f} m/s^2")
+                self._add_stat(stats, "vibration_avg", f"{vibration.mean().mean():.2f} m/s^2")
 
-        # Battery statistics
-        if 'Volt' in self.data.columns:
-            volt_data = pd.to_numeric(self.data['Volt'], errors='coerce').dropna()
-            if not volt_data.empty:
-                _add_stat('max_voltage', f"{volt_data.max():.2f} V")
-                _add_stat('min_voltage', f"{volt_data.min():.2f} V")
-                _add_stat('avg_voltage', f"{volt_data.mean():.2f} V")
-                _add_stat('median_voltage', f"{volt_data.median():.2f} V")
-                _add_stat('voltage_std', f"{volt_data.std():.2f} V")
-                _add_stat('start_voltage', f"{volt_data.iloc[0]:.2f} V")
-                _add_stat('end_voltage', f"{volt_data.iloc[-1]:.2f} V")
-                _add_stat('voltage_drop', f"{(volt_data.iloc[0] - volt_data.iloc[-1]):.2f} V")
-                _add_stat('voltage_drop_pct', f"{((volt_data.iloc[0] - volt_data.iloc[-1]) / volt_data.iloc[0] * 100):.1f}%")
+        for prefix in ("rcin_", "rcout_"):
+            channels = [col for col in self.data.columns if col.startswith(prefix)]
+            for channel in sorted(channels)[:8]:
+                series = pd.to_numeric(self.data[channel], errors="coerce").dropna()
+                if not series.empty:
+                    self._add_stat(stats, f"{channel}_avg", f"{series.mean():.0f} us")
+                    self._add_stat(stats, f"{channel}_range", f"{(series.max() - series.min()):.0f} us")
 
-        if 'Curr' in self.data.columns:
-            curr_data = pd.to_numeric(self.data['Curr'], errors='coerce').dropna()
-            if not curr_data.empty:
-                _add_stat('max_current', f"{curr_data.max():.2f} A")
-                _add_stat('avg_current', f"{curr_data.mean():.2f} A")
-                _add_stat('median_current', f"{curr_data.median():.2f} A")
-                _add_stat('current_std', f"{curr_data.std():.2f} A")
-                _add_stat('start_current', f"{curr_data.iloc[0]:.2f} A")
-                _add_stat('end_current', f"{curr_data.iloc[-1]:.2f} A")
-                if isinstance(curr_data.index, pd.DatetimeIndex) and len(curr_data.index) > 1:
-                    dt_seconds = curr_data.index.to_series().diff().dt.total_seconds().fillna(0)
-                    charge_consumed = np.trapz(curr_data, dx=dt_seconds) / 3600.0
-                    _add_stat('consumed_ah', f"{charge_consumed:.2f} Ah")
-                    _add_stat('avg_power_w', f"{(curr_data * pd.to_numeric(self.data.get('Volt', curr_data.index * 0), errors='coerce')).mean():.2f} W")
+        if "flight_mode" in self.data.columns:
+            modes = self.data["flight_mode"].ffill().dropna()
+            if not modes.empty:
+                counts = modes.value_counts()
+                self._add_stat(stats, "flight_modes_detected", ", ".join(counts.index.astype(str)))
+                self._add_stat(stats, "flight_mode_changes", max(int(modes.ne(modes.shift()).sum() - 1), 0))
+                self._add_stat(stats, "most_used_mode", str(counts.idxmax()))
+                if isinstance(modes.index, pd.DatetimeIndex) and len(modes.index) > 1:
+                    durations = modes.to_frame("mode")
+                    durations["duration_s"] = (
+                        durations.index.to_series().diff().shift(-1).dt.total_seconds().fillna(0)
+                    )
+                    by_mode = durations.groupby("mode")["duration_s"].sum().sort_values(ascending=False)
+                    if not by_mode.empty:
+                        top_mode = by_mode.index[0]
+                        self._add_stat(stats, "longest_mode", f"{top_mode} ({by_mode.iloc[0] / 60:.1f} min)")
+                        self._add_stat(
+                            stats,
+                            "mode_duration_breakdown",
+                            ", ".join(f"{mode}: {seconds / 60:.1f} min" for mode, seconds in by_mode.items()),
+                        )
 
-        # GPS quality
-        if 'NSats' in self.data.columns:
-            sats = pd.to_numeric(self.data['NSats'], errors='coerce').dropna()
-            if not sats.empty:
-                _add_stat('gps_satellites_avg', f"{sats.mean():.1f}")
-                _add_stat('gps_satellites_min', f"{sats.min():.0f}")
-                _add_stat('gps_satellites_max', f"{sats.max():.0f}")
-
-        if 'HDop' in self.data.columns:
-            hdop = pd.to_numeric(self.data['HDop'], errors='coerce').dropna()
-            if not hdop.empty:
-                _add_stat('gps_hdop_avg', f"{hdop.mean():.2f}")
-                _add_stat('gps_hdop_min', f"{hdop.min():.2f}")
-                _add_stat('gps_hdop_max', f"{hdop.max():.2f}")
-
-        # Attitude statistics
-        for axis in ['Roll', 'Pitch', 'Yaw']:
-            if axis in self.data.columns:
-                axis_data = pd.to_numeric(self.data[axis], errors='coerce').dropna()
-                if not axis_data.empty:
-                    _add_stat(f'max_{axis.lower()}', f"{axis_data.max():.1f}°")
-                    _add_stat(f'min_{axis.lower()}', f"{axis_data.min():.1f}°")
-                    _add_stat(f'avg_{axis.lower()}', f"{axis_data.mean():.1f}°")
-                    _add_stat(f'median_{axis.lower()}', f"{axis_data.median():.1f}°")
-                    _add_stat(f'std_{axis.lower()}', f"{axis_data.std():.1f}°")
-                    _add_stat(f'range_{axis.lower()}', f"{axis_data.max() - axis_data.min():.1f}°")
-                    if isinstance(axis_data.index, pd.DatetimeIndex) and len(axis_data.index) > 1:
-                        dt_seconds = axis_data.index.to_series().diff().dt.total_seconds().replace(0, pd.NA)
-                        rate = axis_data.diff() / dt_seconds
-                        rate = rate.dropna()
-                        if not rate.empty:
-                            _add_stat(f'max_{axis.lower()}_rate', f"{rate.max():.2f}°/с")
-                            _add_stat(f'min_{axis.lower()}_rate', f"{rate.min():.2f}°/с")
-
-        # Vibration statistics (ArduPilot VIBE message)
-        vibe_columns = ['VibeX', 'VibeY', 'VibeZ']
-        available_vibes = [col for col in vibe_columns if col in self.data.columns]
-        if available_vibes:
-            combined = pd.DataFrame({col: pd.to_numeric(self.data[col], errors='coerce') for col in available_vibes})
-            combined = combined.dropna(how='all')
-            if not combined.empty:
-                _add_stat('vibration_peak', f"{combined.max().max():.2f} m/s²")
-                _add_stat('vibration_avg', f"{combined.mean().mean():.2f} m/s²")
-                for col in available_vibes:
-                    axis_series = combined[col].dropna()
-                    if not axis_series.empty:
-                        _add_stat(f'{col.lower()}_max', f"{axis_series.max():.2f} m/s²")
-                        _add_stat(f'{col.lower()}_avg', f"{axis_series.mean():.2f} m/s²")
-                        _add_stat(f'{col.lower()}_std', f"{axis_series.std():.2f} m/s²")
-
-        # RC channel statistics (inputs and outputs)
-        def _collect_channel_stats(prefix, channels):
-            for ch in channels:
-                colname = f'{prefix}{ch}'
-                if colname in self.data.columns:
-                    series = pd.to_numeric(self.data[colname], errors='coerce').dropna()
-                    if series.empty:
-                        continue
-                    _add_stat(f'{colname}_min', f"{series.min():.0f} μs")
-                    _add_stat(f'{colname}_max', f"{series.max():.0f} μs")
-                    _add_stat(f'{colname}_avg', f"{series.mean():.1f} μs")
-                    _add_stat(f'{colname}_median', f"{series.median():.1f} μs")
-                    _add_stat(f'{colname}_std', f"{series.std():.1f} μs")
-                    _add_stat(f'{colname}_range', f"{series.max() - series.min():.1f} μs")
-
-        _collect_channel_stats('rcin_', [f'C{i}' for i in range(1, 13)])
-        _collect_channel_stats('rcout_', [f'C{i}' for i in range(1, 13)])
-
-        # Flight mode statistics
-        if 'flight_mode' in self.data.columns:
-            mode_series = self.data['flight_mode'].ffill().dropna()
-            if not mode_series.empty:
-                counts = mode_series.value_counts()
-                _add_stat('flight_modes_detected', ', '.join(counts.index.astype(str)))
-                mode_changes = int(mode_series.ne(mode_series.shift()).sum() - 1)
-                _add_stat('flight_mode_changes', max(mode_changes, 0))
-                _add_stat('most_used_mode', counts.idxmax())
-                if isinstance(mode_series.index, pd.DatetimeIndex) and len(mode_series.index) > 1:
-                    durations = mode_series.to_frame('mode')
-                    durations['duration'] = durations.index.to_series().diff().shift(-1).dt.total_seconds().fillna(0)
-                    duration_by_mode = durations.groupby('mode')['duration'].sum().sort_values(ascending=False)
-                    top_mode, top_duration = duration_by_mode.index[0], duration_by_mode.iloc[0]
-                    _add_stat('longest_mode', f"{top_mode} ({top_duration/60:.1f} хв)")
-                    _add_stat('mode_duration_breakdown', ', '.join([
-                        f"{m}: {t/60:.1f} хв" for m, t in duration_by_mode.items()
-                    ]))
-
-        # Behavior analysis via lightweight neural network
         try:
             self.behavior_model.train_from_log(self.data)
             behavior = self.behavior_model.analyze(self.data)
             if behavior:
-                stats['behavior_summary'] = behavior['summary']
-                breakdown_parts = [
-                    f"{label}: {share * 100:.1f}%" for label, share in behavior['distribution'].items()
-                ]
-                stats['behavior_breakdown'] = ", ".join(breakdown_parts)
+                stats["behavior_summary"] = behavior["summary"]
+                stats["behavior_breakdown"] = ", ".join(
+                    f"{label}: {share * 100:.1f}%"
+                    for label, share in behavior["distribution"].items()
+                )
         except Exception:
-            logger.warning("Не вдалося побудувати модель поведінки:\n%s", traceback.format_exc())
+            logger.warning("Could not build behavior model:\n%s", traceback.format_exc())
 
         return stats
 
+    def _apply_layout(self, fig: go.Figure, title: str, y_title: str) -> None:
+        fig.update_layout(
+            template="plotly_white",
+            hovermode="x unified",
+            height=480,
+            margin=dict(l=48, r=32, b=48, t=72),
+            paper_bgcolor="#fffaf1",
+            plot_bgcolor="#fffaf1",
+            font=dict(
+                family="'Segoe UI Variable', 'Segoe UI', sans-serif",
+                size=13,
+                color="#1a2233",
+            ),
+            title=dict(text=title, font=dict(size=22, color="#14213d")),
+            xaxis=dict(title="Time", gridcolor="rgba(20, 33, 61, 0.08)", zeroline=False),
+            yaxis=dict(title=y_title, gridcolor="rgba(20, 33, 61, 0.08)", zeroline=False),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+
+    def _render_figure(self, fig: go.Figure) -> str:
+        return fig.to_html(full_html=False, include_plotlyjs=False, config={"responsive": True})
+
     def generate_basic_graphs(self, include=None):
-        """Generate interactive flight data visualizations using Plotly
-
-        Args:
-            include: Optional set of graph identifiers to include. Supported
-                values: {'altitude', 'speed', 'throttle', 'attitude', 'battery', 'vibration', 'rc_channels', 'flight_modes'}.
-        """
         graphs = {}
-
         if self.data.empty:
             return graphs
 
-        include = include or {'altitude', 'speed', 'throttle', 'attitude', 'battery', 'vibration', 'rc_channels', 'flight_modes'}
-        include = set(include)
-        
-        # Загальні налаштування для всіх графіків
-        common_layout = {
-            'font': {
-                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                'size': 14,
-                'color': '#333',
-                'weight': 'bold'  # жирний шрифт
-            },
-            'hovermode': 'x unified',
-            'template': 'plotly_white',
-            'height': 500,
-            'margin': dict(l=50, r=50, b=50, t=80, pad=4),
-            'plot_bgcolor': 'white',
-            'paper_bgcolor': 'white',
-        }
-        
-        # Altitude plot
-        if 'altitude' in include and 'altitude' in self.data.columns:
-            alt_data = self.data['altitude'].dropna()
-            if not alt_data.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=alt_data.index,
-                    y=alt_data,
-                    mode='lines',
-                    name='Висота (BARO)',
-                    line=dict(color='blue', width=2),
-                    hovertemplate='<b>Час</b>: %{x}<br><b>Висота</b>: %{y:.2f} м<extra></extra>'
-                ))
-                
-                layout = common_layout.copy()
-                layout.update({
-                    'title': {
-                        'text': 'Висота польоту',
-                        'font': {
-                            'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                            'size': 18,
-                            'weight': 'bold'  # жирний заголовок
-                        }
-                    },
-                    'yaxis': {
-                        'title': {
-                            'text': 'Висота (m)',
-                            'font': {
-                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                                'size': 16,
-                                'weight': 'bold'  # жирний текст осі Y
-                            }
-                        }
-                    },
-                    'xaxis': {
-                        'title': {
-                            'text': 'Час',
-                            'font': {
-                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                                'size': 16,
-                                'weight': 'bold'  # жирний текст осі X
-                            }
-                        }
-                    },
-                })
-                fig.update_layout(layout)
-                
-                graphs['altitude'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
-        
-        # Speed plot
-        if 'speed' in include and 'speed' in self.data.columns:
-            speed_data = self.data['speed'].dropna()
-            if not speed_data.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=speed_data.index,
-                    y=speed_data * 3.6,
-                    mode='lines',
-                    name='Швидкість (GPS)',
-                    line=dict(color='green', width=2),
-                    hovertemplate='<b>Час</b>: %{x}<br><b>Швидкість</b>: %{y:.2f} км/год<extra></extra>'
-                ))
-                
-                layout = common_layout.copy()
-                layout.update({
-                    'title': {
-                        'text': 'Швидкість польоту',
-                        'font': {
-                            'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                            'size': 18,
-                            'weight': 'bold'  # жирний заголовок
-                        }
-                    },
-                    'yaxis': {
-                        'title': {
-                            'text': 'Швидкість (км/год)',
-                            'font': {
-                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                                'size': 16,
-                                'weight': 'bold'  # жирний текст осі Y
-                            }
-                        }
-                    },
-                    'xaxis': {
-                        'title': {
-                            'text': 'Час',
-                            'font': {
-                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                                'size': 16,
-                                'weight': 'bold'  # жирний текст осі X
-                            }
-                        }
-                    },
-                })
-                fig.update_layout(layout)
-                
-                graphs['speed'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
-        
-        # Throttle plot
-        if 'throttle' in include and 'throttle' in self.data.columns:
-            thr_data = self.data['throttle'].dropna()
-            if not thr_data.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=thr_data.index,
-                    y=thr_data,
-                    mode='lines',
-                    name='Throttle',
-                    line=dict(color='orange', width=2),
-                    hovertemplate='<b>Час</b>: %{x}<br><b>Throttle</b>: %{y:.1f}%<extra></extra>'
-                ))
-                
-                layout = common_layout.copy()
-                layout.update({
-                    'title': {
-                        'text': 'Відсоток газу (Throttle)',
-                        'font': {
-                            'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                            'size': 18,
-                            'weight': 'bold'  # жирний заголовок
-                        }
-                    },
-                    'yaxis': {
-                        'title': {
-                            'text': 'Відсоток газу (%)',
-                            'font': {
-                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                                'size': 16,
-                                'weight': 'bold'  # жирний текст осі Y
-                            }
-                        }
-                    },
-                    'xaxis': {
-                        'title': {
-                            'text': 'Час',
-                            'font': {
-                                'family': "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-                                'size': 16,
-                                'weight': 'bold'  # жирний текст осі X
-                            }
-                        }
-                    },
-                })
-                fig.update_layout(layout)
+        include = set(include or self.GRAPH_OPTIONS) & self.GRAPH_OPTIONS
 
-                graphs['throttle'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
-
-        # Attitude plot
-        if 'attitude' in include and {'Roll', 'Pitch'} <= set(self.data.columns):
-            roll_data = pd.to_numeric(self.data['Roll'], errors='coerce').dropna()
-            pitch_data = pd.to_numeric(self.data['Pitch'], errors='coerce').dropna()
-            if not roll_data.empty and not pitch_data.empty:
+        if "altitude" in include and "altitude" in self.data.columns:
+            altitude = pd.to_numeric(self.data["altitude"], errors="coerce").dropna()
+            if not altitude.empty:
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=roll_data.index,
-                    y=roll_data,
-                    mode='lines',
-                    name='Roll',
-                    line=dict(color='purple', width=2),
-                    hovertemplate='<b>Час</b>: %{x}<br><b>Roll</b>: %{y:.1f}°<extra></extra>'
-                ))
-                fig.add_trace(go.Scatter(
-                    x=pitch_data.index,
-                    y=pitch_data,
-                    mode='lines',
-                    name='Pitch',
-                    line=dict(color='teal', width=2),
-                    hovertemplate='<b>Час</b>: %{x}<br><b>Pitch</b>: %{y:.1f}°<extra></extra>'
-                ))
+                fig.add_trace(
+                    go.Scatter(
+                        x=altitude.index,
+                        y=altitude,
+                        mode="lines",
+                        name="BARO altitude",
+                        line=dict(color="#1f5f8b", width=2.5),
+                        hovertemplate="<b>Time</b>: %{x}<br><b>Altitude</b>: %{y:.2f} m<extra></extra>",
+                    )
+                )
+                self._apply_layout(fig, "Altitude profile", "Altitude (m)")
+                graphs["altitude"] = self._render_figure(fig)
 
-                layout = common_layout.copy()
-                layout.update({
-                    'title': {'text': 'Кути крену та тангажу'},
-                    'yaxis': {'title': 'Кути (°)'},
-                    'xaxis': {'title': 'Час'},
-                })
-                fig.update_layout(layout)
-                graphs['attitude'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
+        if "speed" in include and "speed" in self.data.columns:
+            speed = pd.to_numeric(self.data["speed"], errors="coerce").dropna()
+            if not speed.empty:
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=speed.index,
+                        y=speed * 3.6,
+                        mode="lines",
+                        name="GPS speed",
+                        line=dict(color="#2e7d32", width=2.5),
+                        hovertemplate="<b>Time</b>: %{x}<br><b>Speed</b>: %{y:.2f} km/h<extra></extra>",
+                    )
+                )
+                self._apply_layout(fig, "Speed trace", "Speed (km/h)")
+                graphs["speed"] = self._render_figure(fig)
 
-        # Battery plot
-        if 'battery' in include and 'Volt' in self.data.columns:
-            volt_data = pd.to_numeric(self.data['Volt'], errors='coerce').dropna()
-            curr_data = pd.to_numeric(self.data['Curr'], errors='coerce').dropna() if 'Curr' in self.data.columns else None
-            if not volt_data.empty:
+        if "throttle" in include and "throttle" in self.data.columns:
+            throttle = pd.to_numeric(self.data["throttle"], errors="coerce").dropna()
+            if not throttle.empty:
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=throttle.index,
+                        y=throttle,
+                        mode="lines",
+                        name="Throttle",
+                        line=dict(color="#c56a1a", width=2.5),
+                        hovertemplate="<b>Time</b>: %{x}<br><b>Throttle</b>: %{y:.1f}%<extra></extra>",
+                    )
+                )
+                self._apply_layout(fig, "Throttle trace", "Throttle (%)")
+                graphs["throttle"] = self._render_figure(fig)
+
+        if "attitude" in include and {"Roll", "Pitch"} <= set(self.data.columns):
+            roll = pd.to_numeric(self.data["Roll"], errors="coerce").dropna()
+            pitch = pd.to_numeric(self.data["Pitch"], errors="coerce").dropna()
+            if not roll.empty and not pitch.empty:
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=roll.index,
+                        y=roll,
+                        mode="lines",
+                        name="Roll",
+                        line=dict(color="#7b4f9d", width=2.2),
+                        hovertemplate="<b>Time</b>: %{x}<br><b>Roll</b>: %{y:.1f} deg<extra></extra>",
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=pitch.index,
+                        y=pitch,
+                        mode="lines",
+                        name="Pitch",
+                        line=dict(color="#188977", width=2.2),
+                        hovertemplate="<b>Time</b>: %{x}<br><b>Pitch</b>: %{y:.1f} deg<extra></extra>",
+                    )
+                )
+                self._apply_layout(fig, "Attitude trace", "Angle (deg)")
+                graphs["attitude"] = self._render_figure(fig)
+
+        if "battery" in include and "Volt" in self.data.columns:
+            voltage = pd.to_numeric(self.data["Volt"], errors="coerce").dropna()
+            current = (
+                pd.to_numeric(self.data["Curr"], errors="coerce").dropna()
+                if "Curr" in self.data.columns
+                else None
+            )
+            if not voltage.empty:
                 fig = make_subplots(specs=[[{"secondary_y": True}]])
-                fig.add_trace(go.Scatter(
-                    x=volt_data.index,
-                    y=volt_data,
-                    mode='lines',
-                    name='Напруга (V)',
-                    line=dict(color='#e74c3c', width=2),
-                    hovertemplate='<b>Час</b>: %{x}<br><b>Напруга</b>: %{y:.2f} V<extra></extra>'
-                ), secondary_y=False)
+                fig.add_trace(
+                    go.Scatter(
+                        x=voltage.index,
+                        y=voltage,
+                        mode="lines",
+                        name="Voltage",
+                        line=dict(color="#e74c3c", width=2.2),
+                        hovertemplate="<b>Time</b>: %{x}<br><b>Voltage</b>: %{y:.2f} V<extra></extra>",
+                    ),
+                    secondary_y=False,
+                )
+                if current is not None and not current.empty:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=current.index,
+                            y=current,
+                            mode="lines",
+                            name="Current",
+                            line=dict(color="#8e44ad", width=2.0, dash="dot"),
+                            hovertemplate="<b>Time</b>: %{x}<br><b>Current</b>: %{y:.2f} A<extra></extra>",
+                        ),
+                        secondary_y=True,
+                    )
+                self._apply_layout(fig, "Power system", "Voltage (V)")
+                fig.update_yaxes(title_text="Current (A)", secondary_y=True)
+                graphs["battery"] = self._render_figure(fig)
 
-                if curr_data is not None and not curr_data.empty:
-                    fig.add_trace(go.Scatter(
-                        x=curr_data.index,
-                        y=curr_data,
-                        mode='lines',
-                        name='Струм (A)',
-                        line=dict(color='#8e44ad', width=2, dash='dot'),
-                        hovertemplate='<b>Час</b>: %{x}<br><b>Струм</b>: %{y:.2f} A<extra></extra>'
-                    ), secondary_y=True)
-
-                layout = common_layout.copy()
-                layout.update({
-                    'title': {'text': 'Бортове живлення'},
-                    'xaxis': {'title': 'Час'},
-                    'yaxis': {'title': 'Напруга (V)'},
-                })
-                fig.update_yaxes(title_text='Струм (A)', secondary_y=True)
-                fig.update_layout(layout)
-                graphs['battery'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
-
-        # Vibration plot
-        if 'vibration' in include:
-            vibe_columns = ['VibeX', 'VibeY', 'VibeZ']
-            available_vibes = [col for col in vibe_columns if col in self.data.columns]
-            if available_vibes:
-                combined = pd.DataFrame({col: pd.to_numeric(self.data[col], errors='coerce') for col in available_vibes})
-                combined = combined.dropna(how='all')
-                if not combined.empty:
+        if "vibration" in include:
+            columns = [col for col in ("VibeX", "VibeY", "VibeZ") if col in self.data.columns]
+            if columns:
+                vibration = pd.DataFrame(
+                    {col: pd.to_numeric(self.data[col], errors="coerce") for col in columns}
+                ).dropna(how="all")
+                if not vibration.empty:
                     fig = go.Figure()
-                    colors = ['#ff7f50', '#1abc9c', '#9b59b6']
-                    for idx, col in enumerate(available_vibes):
-                        fig.add_trace(go.Scatter(
-                            x=combined.index,
-                            y=combined[col],
-                            mode='lines',
-                            name=col,
-                            line=dict(color=colors[idx % len(colors)], width=2),
-                            hovertemplate=f'<b>Час</b>: %{{x}}<br><b>{col}</b>: %{{y:.2f}} m/s²<extra></extra>'
-                        ))
+                    colors = ["#ff7f50", "#1abc9c", "#9b59b6"]
+                    for idx, col in enumerate(columns):
+                        fig.add_trace(
+                            go.Scatter(
+                                x=vibration.index,
+                                y=vibration[col],
+                                mode="lines",
+                                name=col,
+                                line=dict(color=colors[idx % len(colors)], width=2),
+                                hovertemplate=f"<b>Time</b>: %{{x}}<br><b>{col}</b>: %{{y:.2f}} m/s^2<extra></extra>",
+                            )
+                        )
+                    self._apply_layout(fig, "Vibration profile", "Acceleration (m/s^2)")
+                    graphs["vibration"] = self._render_figure(fig)
 
-                    layout = common_layout.copy()
-                    layout.update({
-                        'title': {'text': 'Вібрації'},
-                        'xaxis': {'title': 'Час'},
-                        'yaxis': {'title': 'Прискорення (m/s²)'},
-                    })
-                    fig.update_layout(layout)
-                    graphs['vibration'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
-
-        # RC input channels plot
-        if 'rc_channels' in include:
-            rc_columns = [col for col in self.data.columns if col.startswith('rcin_C')]
-            if rc_columns:
-                rc_data = self.data[rc_columns].dropna(how='all')
-                if not rc_data.empty:
+        if "rc_channels" in include:
+            columns = [col for col in self.data.columns if col.startswith("rcin_C")]
+            if columns:
+                rc = self.data[columns].dropna(how="all")
+                if not rc.empty:
                     fig = go.Figure()
-                    palette = ['#3498db', '#e67e22', '#9b59b6', '#27ae60', '#c0392b', '#2980b9', '#8e44ad', '#16a085']
-                    for idx, col in enumerate(sorted(rc_columns)[:8]):
-                        fig.add_trace(go.Scatter(
-                            x=rc_data.index,
-                            y=rc_data[col],
-                            mode='lines',
-                            name=col.replace('rcin_', '').upper(),
-                            line=dict(color=palette[idx % len(palette)], width=1.5),
-                            hovertemplate='<b>Час</b>: %{x}<br><b>RC</b>: %{y:.0f} μs<extra></extra>'
-                        ))
+                    palette = ["#3498db", "#e67e22", "#9b59b6", "#27ae60", "#c0392b", "#2980b9", "#8e44ad", "#16a085"]
+                    for idx, col in enumerate(sorted(columns)[:8]):
+                        fig.add_trace(
+                            go.Scatter(
+                                x=rc.index,
+                                y=rc[col],
+                                mode="lines",
+                                name=col.replace("rcin_", "").upper(),
+                                line=dict(color=palette[idx % len(palette)], width=1.5),
+                                hovertemplate="<b>Time</b>: %{x}<br><b>RC</b>: %{y:.0f} us<extra></extra>",
+                            )
+                        )
+                    self._apply_layout(fig, "RC input channels", "PWM (us)")
+                    graphs["rc_channels"] = self._render_figure(fig)
 
-                    layout = common_layout.copy()
-                    layout.update({
-                        'title': {'text': 'RC IN (канали керування)'},
-                        'xaxis': {'title': 'Час'},
-                        'yaxis': {'title': 'ШІМ (μs)'},
-                    })
-                    fig.update_layout(layout)
-                    graphs['rc_channels'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
-
-        # Flight mode timeline
-        if 'flight_modes' in include and 'flight_mode' in self.data.columns:
-            mode_series = self.data['flight_mode'].ffill().dropna()
-            if not mode_series.empty:
-                unique_modes = mode_series.dropna().unique()
+        if "flight_modes" in include and "flight_mode" in self.data.columns:
+            modes = self.data["flight_mode"].ffill().dropna()
+            if not modes.empty:
+                unique_modes = modes.dropna().unique()
                 mode_to_num = {mode: idx for idx, mode in enumerate(unique_modes)}
-                encoded = mode_series.map(mode_to_num)
+                encoded = modes.map(mode_to_num)
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=encoded.index,
-                    y=encoded,
-                    mode='lines',
-                    step='post',
-                    name='Режим',
-                    line=dict(color='#2c3e50', width=2),
-                    hovertemplate='<b>Час</b>: %{x}<br><b>Режим</b>: %{text}<extra></extra>',
-                    text=mode_series.astype(str)
-                ))
-                layout = common_layout.copy()
-                layout.update({
-                    'title': {'text': 'Режими польоту'},
-                    'xaxis': {'title': 'Час'},
-                    'yaxis': {
-                        'title': 'Режим',
-                        'tickvals': list(mode_to_num.values()),
-                        'ticktext': list(mode_to_num.keys())
-                    },
-                })
-                fig.update_layout(layout)
-                graphs['flight_modes'] = fig.to_html(full_html=False, include_plotlyjs='cdn')
+                fig.add_trace(
+                    go.Scatter(
+                        x=encoded.index,
+                        y=encoded,
+                        mode="lines",
+                        line_shape="hv",
+                        name="Mode",
+                        line=dict(color="#2c3e50", width=2),
+                        text=modes.astype(str),
+                        hovertemplate="<b>Time</b>: %{x}<br><b>Mode</b>: %{text}<extra></extra>",
+                    )
+                )
+                self._apply_layout(fig, "Flight mode timeline", "Mode")
+                fig.update_yaxes(
+                    tickvals=list(mode_to_num.values()),
+                    ticktext=list(mode_to_num.keys()),
+                )
+                graphs["flight_modes"] = self._render_figure(fig)
 
         return graphs

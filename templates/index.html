@@ -1,104 +1,96 @@
-<!DOCTYPE html>
-<html lang="uk">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Аналізатор логів Ardupilot</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-</head>
-<body>
-    <div class="container">
-        <h1>Аналіз логів БПЛА (Ardupilot)</h1>
-        <p>Завантажте .bin файл логу для аналізу (макс. 1000MB)</p>
-        
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                <div class="error-messages">
-                    {% for message in messages %}
-                        <p class="error">{{ message }}</p>
-                    {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
-        
-        <form method="POST" enctype="multipart/form-data" id="uploadForm">
-            <div class="file-upload">
-                <input type="file" name="file" id="file" accept=".bin" required>
-                <label for="file" class="toggle-button">Обрати файл</label>
-                <div id="fileInfo"></div>
+{% extends "base.html" %}
+
+{% block content %}
+<section class="hero hero-home">
+    <div class="hero-copy">
+        <p class="eyebrow">Flight log intelligence</p>
+        <h1>Inspect ArduPilot missions with a cleaner workflow and a faster read on the data.</h1>
+        <p class="hero-text">
+            Upload a `.bin` log, choose the telemetry slices that matter, and get a focused analysis view with cleaner graphs, grouped metrics, and fewer dead ends.
+        </p>
+
+        <div class="hero-points">
+            <div>
+                <span class="hero-point-label">What it reads</span>
+                <strong>Altitude, speed, throttle, power, vibration, RC, modes</strong>
             </div>
-            <div class="analysis-options">
-                <h3>Що аналізуємо?</h3>
-                <div class="options-grid">
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="basic" checked>
-                        Основні параметри польоту
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="altitude" checked>
-                        Графік висоти
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="speed" checked>
-                        Графік швидкості
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="throttle" checked>
-                        Графік газу (Throttle)
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="attitude" checked>
-                        Кути крену/тангажу
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="battery" checked>
-                        Живлення: напруга та струм
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="vibration" checked>
-                        Вібрації (IMU)
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="rc_channels" checked>
-                        Радіоканали (RC IN/OUT)
-                    </label>
-                    <label>
-                        <input type="checkbox" name="analysis_options" value="flight_modes" checked>
-                        Режими польоту
-                    </label>
-                </div>
-                <p class="options-hint">Можна вимкнути непотрібні метрики, щоб пришвидшити побудову результатів.</p>
+            <div>
+                <span class="hero-point-label">Optimized for</span>
+                <strong>Single-log inspection and quick post-flight review</strong>
             </div>
-            <button type="submit" class="">Аналізувати</button>
-        </form>
-        
-        <div class="info">
-            <h3>Підтримувані дані:</h3>
-            <ul>
-                <li>Висота польоту</li>
-                <li>Швидкість</li>
-                <li>Час польоту</li>
-                <li>Аналіз аномалій (ШІ)</li>
-                <li>Кластеризація режимів польоту</li>
-            </ul>
         </div>
     </div>
 
-    <script>
-        document.getElementById('file').addEventListener('change', function(e) {
-            const fileInfo = document.getElementById('fileInfo');
-            if (this.files && this.files[0]) {
-                const fileSize = (this.files[0].size / (1024 * 1024)).toFixed(2);
-                fileInfo.innerHTML = `Обрано файл: ${this.files[0].name} (${fileSize} MB)`;
-                
-                if (this.files[0].size > 100 * 1024 * 1024 * 1024 ) {
-                    fileInfo.innerHTML += '<br><span style="color:red;">Файл занадто великий! Максимальний розмір: 100MB</span>';
-                    document.querySelector('button[type="submit"]').disabled = true;
-                } else {
-                    document.querySelector('button[type="submit"]').disabled = false;
-                }
-            }
-        });
-    </script>
-</body>
-</html>
+    <div class="upload-panel">
+        <div class="panel-header">
+            <p class="eyebrow">Start analysis</p>
+            <h2>Upload a flight log</h2>
+            <p>Maximum upload size: {{ max_upload_mb }} MB.</p>
+        </div>
+
+        <form method="POST" enctype="multipart/form-data" class="upload-form" data-upload-form>
+            <div class="file-picker" data-file-picker>
+                <input
+                    type="file"
+                    name="file"
+                    id="file"
+                    accept=".bin"
+                    required
+                    data-file-input
+                    data-max-upload-mb="{{ max_upload_mb }}"
+                >
+                <label for="file" class="file-picker-button">Choose `.bin` file</label>
+                <div class="file-meta" data-file-meta>
+                    <strong>No file selected</strong>
+                    <span>Select an ArduPilot binary log to continue.</span>
+                </div>
+            </div>
+
+            <section class="option-panel">
+                <div class="option-panel-head">
+                    <div>
+                        <h3>Analysis scope</h3>
+                        <p>Disable any views you do not need to reduce render time.</p>
+                    </div>
+                    <span class="option-counter" data-option-counter></span>
+                </div>
+
+                <div class="option-grid">
+                    {% for option in analysis_options %}
+                    <label class="option-tile">
+                        <input type="checkbox" name="analysis_options" value="{{ option.key }}" checked data-analysis-option>
+                        <span class="option-text">
+                            <strong>{{ option.label }}</strong>
+                            <span>{{ option.description }}</span>
+                        </span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </section>
+
+            <button type="submit" class="primary-button" data-submit-button>Analyze log</button>
+        </form>
+    </div>
+</section>
+
+<section class="support-strip">
+    <div class="support-block">
+        <p class="eyebrow">Designed for operation</p>
+        <h2>Less clutter, better scanability.</h2>
+    </div>
+    <div class="support-list">
+        <div>
+            <strong>Grouped metrics</strong>
+            <span>Stats are organized by flight domain instead of dumped into one long wall.</span>
+        </div>
+        <div>
+            <strong>Clean plotting</strong>
+            <span>Charts load once and follow a consistent visual theme across the results page.</span>
+        </div>
+        <div>
+            <strong>Safer uploads</strong>
+            <span>Validation, file limits, and missing-file handling are now aligned end to end.</span>
+        </div>
+    </div>
+</section>
+{% endblock %}

@@ -1,258 +1,104 @@
-<!DOCTYPE html>
-<html lang="uk">
-<head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Результати аналізу</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}" />
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-    <style>
-        /* Приховуємо контент, якщо встановлено клас hidden */
-        .hidden {
-            max-height: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            opacity: 0;
-            pointer-events: none;
-        }
-        /* Світла тема - за замовчуванням */
-        body {
-            background-color: #f5f5f5;
-            color: #333;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-        .section {
-            background: #fff;
-            padding: 20px;
-            border-radius: 5px;
-            margin: 20px 0;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.);
-        }
-        /* Темна тема */
-        body.dark-theme {
-            background-color: #121212;
-            color: #ddd;
-        }
-        body.dark-theme .container {
-            /* можна зробити світліший фон блоків */
-            background: none;
-        }
-        body.dark-theme .section {
-            background: #4d4d4d;
-            box-shadow: 0 2px 5px rgba(255,255,255,0.1);
-        }
-        body.dark-theme .stat-card {
-            background: #414141;
-            border-left-color: #82aaff;
-        }
-        body.dark-theme .stat-card h3 {
-            color: #a0a0a0;
-        }
-        body.dark-theme a.back-link {
-            color: #82aaff;
-        }
-        body.dark-theme button.toggle-button {
-            background: #82aaff;
-            color: #4b4b4b;
-        }
-        body.dark-theme button.toggle-button:hover {
-            background: #6a8fcc;
-        }
+{% extends "base.html" %}
 
-        /* Кнопка перемикання теми */
-        #theme-toggle {
-            position: fixed;
-            top: 15px;
-            right: 15px;
-            padding: 10px 15px;
-            background: #3498db;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-weight: bold;
-            font-size: 14px;
-            z-index: 1000;
-            transition: background 0.3s;
-        }
-        #theme-toggle:hover {
-            background: #2980b9;
-        }
-    </style>
-</head>
-<body>
-    <button id="theme-toggle" aria-label="Переключити тему">Темна тема</button>
-    <div class="container">
-        <h1>Результати аналізу</h1>
-        <a href="{{ url_for('upload_file') }}" class="back-link">← На головну</a>
-        <div class="selected-options">
-            <strong>Обраний аналіз:</strong>
-            <span>
-                {{ ' · '.join(selected_options|list)
-                    |replace('basic', 'Основні параметри')
-                    |replace('altitude', 'Графік висоти')
-                    |replace('speed', 'Графік швидкості')
-                    |replace('throttle', 'Графік газу')
-                    |replace('attitude', 'Кути крену/тангажу')
-                    |replace('battery', 'Живлення')
-                    |replace('vibration', 'Вібрації')
-                    |replace('rc_channels', 'RC канали')
-                    |replace('flight_modes', 'Режими польоту')
-                }}
-            </span>
-        </div>
+{% block topbar_actions %}
+<a class="secondary-button" href="{{ url_for('upload_file') }}">New analysis</a>
+{% if filename %}
+<a class="primary-button small-button" href="{{ url_for('download_file', filename=filename) }}">Download source log</a>
+{% endif %}
+{% endblock %}
 
-        {% if 'basic' in selected_options %}
-        <div class="section">
-            <button class="toggle-button" data-target="basic-stats-content">Основні параметри польоту ▼</button>
-            <div id="basic-stats-content" class="section-content">
-                <div class="stats-grid">
-                    {% for key, value in basic_stats.items() %}
-                    <div class="stat-card">
-                        <h3>{{ key|replace('_', ' ')|title }}</h3>
-                        <p>{{ value }}</p>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </div>
-        {% endif %}
+{% block content %}
+<section class="hero hero-results">
+    <div class="hero-copy compact">
+        <p class="eyebrow">Analysis results</p>
+        <h1>{{ display_filename or filename }}</h1>
+        <p class="hero-text">
+            The log has been parsed and organized into grouped metrics and chart sections. Use the summaries first, then expand into the telemetry traces you need.
+        </p>
 
-        {% if graphs %}
-        <div class="section">
-            <button class="toggle-button" data-target="graphs-content">Графіки польоту ▼</button>
-            <div id="graphs-content" class="section-content">
-                <div class="graphs">
-                    {% if graphs.altitude %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.altitude|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if graphs.speed %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.speed|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if graphs.throttle %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.throttle|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if graphs.attitude %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.attitude|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if graphs.battery %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.battery|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if graphs.vibration %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.vibration|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if graphs.rc_channels %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.rc_channels|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if graphs.flight_modes %}
-                    <div class="graph-container">
-                        <div class="plotly-graph">
-                            {{ graphs.flight_modes|safe }}
-                        </div>
-                    </div>
-                    {% endif %}
-
-                    {% if not graphs %}
-                    <p class="warning-message">Обрані графіки не можуть бути згенеровані для цього логу.</p>
-                    {% endif %}
-                </div>
-            </div>
+        {% if selected_options %}
+        <div class="pill-row">
+            {% for label in selected_options %}
+            <span class="pill">{{ label }}</span>
+            {% endfor %}
         </div>
         {% endif %}
     </div>
 
-    <script>
-        // Перемикач теми
-        const themeToggleBtn = document.getElementById('theme-toggle');
+    {% if summary_metrics %}
+    <div class="summary-board">
+        {% for metric in summary_metrics %}
+        <article class="summary-metric">
+            <span>{{ metric.label }}</span>
+            <strong>{{ metric.value }}</strong>
+        </article>
+        {% endfor %}
+    </div>
+    {% endif %}
+</section>
 
-        // Встановлення теми при завантаженні сторінки (з localStorage)
-        function loadTheme() {
-            const savedTheme = localStorage.getItem('theme');
-            if (savedTheme === 'dark') {
-                document.body.classList.add('dark-theme');
-                themeToggleBtn.textContent = 'Світла тема';
-            } else {
-                document.body.classList.remove('dark-theme');
-                themeToggleBtn.textContent = 'Темна тема';
-            }
-        }
+{% if stat_sections %}
+<section class="workspace-section">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">Structured metrics</p>
+            <h2>Flight statistics</h2>
+        </div>
+        <p>Each block groups related values so you can scan the log by subsystem instead of by raw field name.</p>
+    </div>
 
-        // Перемикання теми при кліку
-        themeToggleBtn.addEventListener('click', () => {
-            document.body.classList.toggle('dark-theme');
-            if (document.body.classList.contains('dark-theme')) {
-                themeToggleBtn.textContent = 'Світла тема';
-                localStorage.setItem('theme', 'dark');
-            } else {
-                themeToggleBtn.textContent = 'Темна тема';
-                localStorage.setItem('theme', 'light');
-            }
-        });
+    <div class="details-stack">
+        {% for section in stat_sections %}
+        <details class="data-section" {% if loop.first %}open{% endif %}>
+            <summary>
+                <span>{{ section["title"] }}</span>
+                <span>{{ section["items"]|length }} metrics</span>
+            </summary>
+            <dl class="stat-list">
+                {% for item in section["items"] %}
+                <div class="stat-row">
+                    <dt>{{ item["label"] }}</dt>
+                    <dd>{{ item["value"] }}</dd>
+                </div>
+                {% endfor %}
+            </dl>
+        </details>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
 
-        loadTheme();
-        // Пошук усіх кнопок toggle-button
-        const toggleButtons = document.querySelectorAll('.toggle-button');
+{% if graph_sections %}
+<section class="workspace-section">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">Telemetry plots</p>
+            <h2>Charts</h2>
+        </div>
+        <p>Interactive plots are kept in a consistent order to match the options selected during upload.</p>
+    </div>
 
-        toggleButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                const targetId = button.getAttribute('data-target');
-                const content = document.getElementById(targetId);
-                if (!content) return;
-            
-                const isCollapsed = content.classList.contains('collapsed');
-            
-                if (isCollapsed) {
-                    // Розгорнути
-                    content.classList.remove('collapsed');
-                    button.textContent = button.textContent.replace('▲', '▼');
-                } else {
-                    // Згорнути
-                    content.classList.add('collapsed');
-                    button.textContent = button.textContent.replace('▼', '▲');
-                }
-            });
-        });
+    <div class="graph-stack">
+        {% for graph in graph_sections %}
+        <section class="graph-section" id="graph-{{ graph.key }}">
+            <div class="graph-copy">
+                <h3>{{ graph.title }}</h3>
+                <p>{{ graph.description }}</p>
+            </div>
+            <div class="graph-frame">
+                {{ graph.html|safe }}
+            </div>
+        </section>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
 
-    </script>
-</body>
-</html>
+{% if not stat_sections and not graph_sections %}
+<section class="empty-state">
+    <p class="eyebrow">No output</p>
+    <h2>This log did not produce visible metrics or charts.</h2>
+    <p>Upload a different `.bin` log or narrow the requested analysis scope to the data available in the file.</p>
+</section>
+{% endif %}
+{% endblock %}

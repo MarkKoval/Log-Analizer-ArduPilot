@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title or "ArduPilot Log Analyzer" }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    {% if include_plotly %}
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    {% endif %}
+</head>
+<body class="{{ page_class or '' }}">
+    <div class="page-chrome" aria-hidden="true">
+        <div class="page-glow page-glow-left"></div>
+        <div class="page-glow page-glow-right"></div>
+        <div class="page-grid"></div>
+    </div>
+
+    <div class="page-shell">
+        <header class="topbar">
+            <a class="brand" href="{{ url_for('upload_file') }}">
+                <span class="brand-mark">LA</span>
+                <span class="brand-copy">
+                    <strong>Log Analyzer</strong>
+                    <span>ArduPilot flight telemetry</span>
+                </span>
+            </a>
+            <nav class="topbar-actions">
+                {% block topbar_actions %}{% endblock %}
+            </nav>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+            <section class="flash-stack" aria-live="polite">
+                {% for category, message in messages %}
+                <div class="flash flash-{{ category or 'info' }}">
+                    <span>{{ message }}</span>
+                    <button type="button" class="flash-dismiss" data-flash-dismiss aria-label="Dismiss message">Close</button>
+                </div>
+                {% endfor %}
+            </section>
+            {% endif %}
+        {% endwith %}
+
+        <main class="page-content">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/scripts.js') }}" defer></script>
+</body>
+</html>
